@@ -11,7 +11,9 @@ The Amazon Order Status integration allows Home Assistant to track your Amazon o
 * Fully customizable options via Home Assistant's UI.
 
 **Installation**
+
 Download the Integration:
+
 Place the amazon_order_status folder in your Home Assistant custom_components directory:
 config/custom_components/amazon_order_status/
 
