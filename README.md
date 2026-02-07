@@ -51,7 +51,7 @@ Upon intial installation, this integration will scan the previous 14 days worth 
 
 **Notes**
 
-***Security Warning - Your IMAP password is stored in the .storage/core_config_entries along with, likely, many other secret values.  This is a cleartext file.  HA, by necessity, must store all secret data in such a way that, if your server is breached at the filesystem level, your secrets could be exposed.  You should be confident in the security of your HA installation (not exposed to the internet, no unencrypted backups of the .storage directory) before using this integration.***
+***Security Warning - Your IMAP password is stored in the .storage/core_config_entries along with, likely, many other secret values.  This is a cleartext file.  HA, by necessity, must store all secret data in such a way that, if your server is breached at the filesystem level, your secrets could be exposed.  You should be confident in the security of your HA installation (not exposed to the internet, no unencrypted backups of the .storage directory) before using this or any integration that asks for secret values.***
 
 Adjust update_interval depending on how frequently you want to poll your inbox. Setting this too low may result in unnecessary server load.
 
