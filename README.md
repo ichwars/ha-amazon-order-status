@@ -101,6 +101,13 @@ cards:
       timestamp_custom('%b %d at %I:%M %p') }}[Track]({{ o.tracking_url }}) {{
       '\n' }} {% else %} _None_ {% endfor %}
   - type: markdown
+    title: 🚚 Out for Delivery
+    content: >
+      {% for o in state_attr('sensor.amazon_orders_out_for_delivery', 'orders') or [] %}
+      • **{{ o.subject }}**   Updated: {{o.updated | as_timestamp |
+      timestamp_custom('%b %d at %I:%M %p') }}[Track]({{ o.tracking_url }}) {{
+      '\n' }} {% else %} _None_ {% endfor %}
+  - type: markdown
     title: 📬 Delivered
     content: |2
 
@@ -109,5 +116,6 @@ cards:
         {% else %}
         _None_
         {% endfor %}
+
 
 ```
