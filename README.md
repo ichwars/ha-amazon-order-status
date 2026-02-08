@@ -74,7 +74,6 @@ Once configured, this integration creates 5 new sensors:
 The ```sensor.amazon_orders_last_updated``` sensor contains a datestamp indicating the last email check.
 
 The remaining sensors contain the following attributes :
-* ```status``` (Will be ```Ordered```, ```Shipped```, ```Out for Delivery```, or ```Delivered```)
 * ```subject``` (contains a truncated order name taken from the subject line of the email)
 * ```updated``` (send date of the email - indicates the date/time of the most recent order update.  This will be an iso date stamp, which can be reformatted via templates in any way you choose. Some examples are below.)
 * ```tracking_url``` (provides the link back to the amazon order tracking page for that order.
