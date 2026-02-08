@@ -5,8 +5,10 @@ from homeassistant.helpers.entity import Entity
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
-
+from datetime import datetime
+from homeassistant.components.sensor import SensorEntity
 from .coordinator import AmazonOrdersCoordinator
+from homeassistant.util.dt import as_local
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -87,6 +89,6 @@ class AmazonOrdersLastUpdatedSensor(CoordinatorEntity, Entity):
     @property
     def state(self):
         """Return ISO timestamp of last successful update."""
-        if not getattr(self.coordinator, "last_update", None):
+        if not getattr(self.coordinator, "last_check", None):
             return None
-        return self.coordinator.last_update.isoformat()
+        return self.coordinator.last_check.isoformat()

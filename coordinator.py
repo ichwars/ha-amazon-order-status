@@ -46,6 +46,7 @@ class AmazonOrdersCoordinator(DataUpdateCoordinator):
         self._orders: Dict[str, dict] = {}
         self.delivered_retention_days = entry.options.get("delivered_retention_days", 7)
         self._mark_as_read = entry.options.get(CONF_MARK_AS_READ, False)
+        self.last_check: datetime | None = None
 
         # Determine update interval from options or config entry, default 5 min
         interval_minutes = entry.options.get(
@@ -92,6 +93,7 @@ class AmazonOrdersCoordinator(DataUpdateCoordinator):
 
         last_check = await self.async_load_last_check()
         now = datetime.now(timezone.utc)
+        self.last_check = now
 
         await self.hass.async_add_executor_job(
             self._fetch_and_parse_emails,
