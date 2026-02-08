@@ -22,10 +22,11 @@ config/custom_components/amazon_order_status/
 * translations/en.json
 * __init\__.py
 * config_flow.py
-* options_flow.py
 * coordinator.py
 * const.py
+* options_flow.py
 * manifest.json
+* sensor.py
 
 ****Restart Home Assistant to detect the new integration.****
 
@@ -67,20 +68,44 @@ Once configured, this integration creates 5 new sensors:
 
 Sensors contain attributes with interesting information that can be parsed though markdown or other methods to display Order dates, tracking links, and other information on the dashboard.    Here is an example markdown card to display order information from the sensor.amazon_orders_ordered sensor:
 
+```
 Amazon Orders – Ordered
-
 {% set orders = state_attr('sensor.amazon_orders_ordered', 'orders') or [] %}
-
 {% for data in orders %}
-
 - **Item:** {{ data.subject }}
-
   - Updated: {{ data.updated | as_timestamp | timestamp_custom('%b %d at %I:%M %p') }}
-  
   - [Track Package]({{ data.tracking_url }})
-  
 {% else %}
-
 _No orders in this state._
-
 {% endfor %}
+```
+
+For Mushroom Card users, here is a more attractive set of widgets:
+```
+type: vertical-stack
+cards:
+  - type: markdown
+    title: 🟡 Ordered
+    content: >
+      {% for o in state_attr('sensor.amazon_orders_ordered', 'orders') or [] %}
+      • **{{ o.subject }}**  Updated: {{o.updated | as_timestamp |
+      timestamp_custom('%b %d at %I:%M %p') }} [Open]({{ o.tracking_url }}) {{
+      '\n' }} {% else %} _None_ {% endfor %}
+  - type: markdown
+    title: 🚚 Shipped
+    content: >
+      {% for o in state_attr('sensor.amazon_orders_shipped', 'orders') or [] %}
+      • **{{ o.subject }}**   Updated: {{o.updated | as_timestamp |
+      timestamp_custom('%b %d at %I:%M %p') }}[Track]({{ o.tracking_url }}) {{
+      '\n' }} {% else %} _None_ {% endfor %}
+  - type: markdown
+    title: 📬 Delivered
+    content: |2
+
+        {% for o in state_attr('sensor.amazon_orders_delivered', 'orders') or [] %}
+        • **{{ o.subject }}** Updated: {{o.updated | as_timestamp | timestamp_custom('%b %d at %I:%M %p') }} [Open]({{ o.tracking_url }}) {{ '\n' }}
+        {% else %}
+        _None_
+        {% endfor %}
+
+```
