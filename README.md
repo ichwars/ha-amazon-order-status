@@ -1,6 +1,5 @@
-![GitHub Release](https://img.shields.io/github/v/release/koconnorgit/ha-amazon-order-status?display_name=tag&link=https%3A%2F%2Fgithub.com%2Fkoconnorgit%2Fha-amazon-order-status%2Freleases%2Flatest)
- ![Static Badge](https://img.shields.io/badge/HACS-Custom-blue?link=https%3A%2F%2Fgithub.com%2Fhacs%2Fintegration)
-
+[![GitHub Release](https://img.shields.io/github/v/release/koconnorgit/ha-amazon-order-status?display_name=tag)](https://github.com/koconnorgit/ha-amazon-order-status/releases/latest)
+[![Static Badge](https://img.shields.io/badge/HACS-Custom-blue)](https://github.com/hacs/integration)
 
 
 
