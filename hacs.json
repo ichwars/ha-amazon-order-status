@@ -2,7 +2,6 @@
   "name": "Amazon Order Status",
   "filename": "custom_components/amazon_order_status",
   "content_in_root": false,
-  "domain": "amazon_order_status",
   "homeassistant": "2023.12.0",
   "render_readme": true,
   "zip_release": false,
