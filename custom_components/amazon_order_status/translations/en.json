@@ -1,0 +1,36 @@
+{
+  "config": {
+    "error": {
+      "cannot_connect": "Cannot connect to IMAP server",
+      "invalid_auth": "Invalid username or password"
+    },
+    "step": {
+      "user": {
+        "title": "Amazon Orders",
+        "description": "Configure IMAP access for Amazon order emails"
+      }
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Amazon Order Options",
+        "description": "Configure how Home Assistant tracks and processes Amazon order emails.  delivered_retention_days  - How many days should HA track delivered orders?     update_interval - how often should HA check for delivery updates?",
+        "data": {
+          "delivered_retention_days": {
+            "name": "Delivered order retention (days)",
+            "description": "How long should HA keep a record of delivered items?"
+          },
+          "update_interval": {
+            "name": "Update interval (minutes)",
+            "description": "How often should HA check for order updates?"
+          },
+          "mark_as_read": {
+            "name": "Mark emails as read",
+            "description": "If enabled, Amazon order emails will be marked as read after processing."
+          }
+        }
+      }
+    }
+  }
+}
