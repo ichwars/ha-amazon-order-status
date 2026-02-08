@@ -14,7 +14,7 @@ We obtain this information via email as Amazon does not publish any public API t
 
 **Installation**
 
-Download the Integration:
+Download the Integration: https://github.com/koconnorgit/ha-amazon-order-status/releases/latest
 
 Place the amazon_order_status folder in your Home Assistant custom_components directory:
 config/custom_components/amazon_order_status/
