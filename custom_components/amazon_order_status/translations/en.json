@@ -15,14 +15,8 @@
     "step": {
       "init": {
         "title": "Amazon Order Options",
-        "description": "Configure how Home Assistant tracks and processes Amazon order emails.  delivered_retention_days  - How many days should HA track delivered orders?     update_interval - how often should HA check for delivery updates?",
-        "data": {
-          "delivered_retention_days": "Delivered order retention (days)",
-          "update_interval": "Update interval (minutes)",
-          "mark_as_read": "Mark emails as read",
+        "description": "Configure how Home Assistant tracks and processes Amazon order emails.  delivered_retention_days  - How many days should HA track delivered orders?     update_interval - how often should HA check for delivery updates?"
           }
         }
       }
     }
-  }
-}
