@@ -2,6 +2,8 @@
 
 The Amazon Order Status integration allows Home Assistant to track your Amazon order emails and provide up-to-date information about delivery status. By connecting directly to your email via IMAP, the integration automatically detects when orders are received, shipped, and delivered, and provides quick links to the order tracking pages.
 
+We obtain this information via email as Amazon does not publish any public API that could be used for order tracking. 
+
 **Features**
 
 * Automatically track Amazon order delivery status.
