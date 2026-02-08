@@ -68,7 +68,16 @@ Once configured, this integration creates 5 new sensors:
 * sensor.amazon_orders_shipped
 * sensor.amazon_orders_last_updated
 
-Sensors contain attributes with interesting information that can be parsed though markdown or other methods to display Order dates, tracking links, and other information on the dashboard.    Here is an example markdown card to display order information from the sensor.amazon_orders_ordered sensor:
+The sensor.amazon_orders_last_updated sensor contains a datestamp indicating the last email check.
+
+The remaining sensors contain the following attributes :
+* subject (contains a truncated order name taken from the subject line of the email)
+* updated (send date of the email - indicates the date of the most recent order update)
+* tracking_url (provides the link back to the amazon order tracking page for that order.
+
+...these can be parsed though markdown or other methods to display the Order dates, tracking links, etc. on the dashboard.    Here is an example markdown card to display order information from the sensor.amazon_orders_ordered sensor:
+
+
 
 ```
 Amazon Orders – Ordered
