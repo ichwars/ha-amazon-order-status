@@ -78,7 +78,7 @@ The remaining sensors contain the following attributes :
 * ```updated``` (send date of the email - indicates the date/time of the most recent order update.  This will be an iso date stamp, which can be reformatted via templates in any way you choose. Some examples are below.)
 * ```tracking_url``` (provides the link back to the amazon order tracking page for that order.
 
-...these can be parsed though markdown or other methods to display the Order dates, tracking links, etc. on the dashboard.    Here is an example markdown card to display order information from the sensor.amazon_orders_ordered sensor:
+...these can be parsed though markdown or other methods to display the Order dates, tracking links, etc. on the dashboard.    Here is an example markdown card to display order information from the ```sensor.amazon_orders_ordered``` sensor:
 
 
 
