@@ -19,12 +19,12 @@ config/custom_components/amazon_order_status/
 
 *Make sure it contains:*
 
+* translations/en.json
 * __init\__.py
 * config_flow.py
 * options_flow.py
 * coordinator.py
 * const.py
-* translations/en.json
 * manifest.json
 
 ****Restart Home Assistant to detect the new integration.****
