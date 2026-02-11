@@ -21,12 +21,41 @@ from bs4 import BeautifulSoup
 from .const import CONF_MARK_AS_READ
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def _parse_internaldate(internaldate_str: str) -> datetime | None:
+    """Parse IMAP INTERNALDATE string to timezone-aware UTC datetime."""
+    try:
+        # Format: "08-Feb-2025 18:30:00 +0000" or "08-Feb-2025 10:30:00 -0800"
+        internaldate_str = internaldate_str.strip()
+        if len(internaldate_str) < 26:
+            return None
+        dt = datetime.strptime(internaldate_str[:20], "%d-%b-%Y %H:%M:%S")
+        tz_str = internaldate_str[20:].strip()
+        if not tz_str:
+            return dt.replace(tzinfo=timezone.utc)
+        sign = -1 if tz_str[0] == "-" else 1
+        hours = int(tz_str[1:3])
+        mins = int(tz_str[3:5]) if len(tz_str) >= 5 else 0
+        tz = timezone(timedelta(minutes=sign * (hours * 60 + mins)))
+        return dt.replace(tzinfo=tz).astimezone(timezone.utc)
+    except (ValueError, IndexError):
+        return None
+
+
+def _to_utc(dt: datetime) -> datetime:
+    """Normalize a datetime to UTC for comparison."""
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
 LAST_CHECK_KEY = "last_check"
 STORAGE_VERSION = 1
 STORAGE_KEY = "amazon_order_status"
 ORDERS_KEY = "orders"
 
 ORDER_REGEX = re.compile(r"Order\s*#\s*([0-9\-]{10,})", re.IGNORECASE)
+# IMAP INTERNALDATE format: "08-Feb-2025 18:30:00 +0000"
+INTERNALDATE_RE = re.compile(r'INTERNALDATE\s+"([^"]+)"', re.IGNORECASE)
 
 STATUS_MAP = {
     "ordered": "Ordered",
@@ -172,11 +201,15 @@ class AmazonOrdersCoordinator(DataUpdateCoordinator):
             since = last_check
             _LOGGER.debug("Checking emails since last run: %s", since)
         else:
-            since = now - timedelta(days=14)
-            _LOGGER.debug("First run: checking last 14 days")
+            since = now - timedelta(days=20)
+            _LOGGER.debug("First run: checking last 20 days")
 
-        since_date = since.strftime("%d-%b-%Y")
-        typ, data = mail.search(None, f'(SINCE "{since_date}")')
+        since_utc = _to_utc(since)
+        # IMAP SINCE is interpreted in the server's timezone (e.g. Gmail uses PST), so
+        # using the UTC date can ask for "future" emails and return 0. Use one day
+        # earlier so we always fetch recent emails; we filter by since_utc in Python.
+        since_date_imap = (since_utc - timedelta(days=1)).strftime("%d-%b-%Y")
+        typ, data = mail.search(None, f'(SINCE "{since_date_imap}")')
 
         if typ != "OK":
             _LOGGER.error("IMAP search failed")
@@ -184,25 +217,40 @@ class AmazonOrdersCoordinator(DataUpdateCoordinator):
             return
 
         email_nums = data[0].split()
-        _LOGGER.debug("Found %d emails since %s", len(email_nums), since_date)
+        _LOGGER.debug(
+            "Found %d emails since %s (processing all; applying updates when email is newer than stored)",
+            len(email_nums),
+            since_date_imap,
+        )
 
         for num in email_nums:
-            typ, msg_data = mail.fetch(num, "(BODY.PEEK[])")
+            typ, msg_data = mail.fetch(num, "(BODY.PEEK[] INTERNALDATE)")
             if typ != "OK" or not msg_data or not msg_data[0]:
                 _LOGGER.warning("Failed to fetch email %s", num)
                 continue
 
+            # Prefer INTERNALDATE (when mailbox received the message) over Date header
+            raw_response = msg_data[0][0]
+            if isinstance(raw_response, bytes):
+                raw_response = raw_response.decode(errors="ignore")
+            internaldate_utc = None
+            internaldate_match = INTERNALDATE_RE.search(raw_response)
+            if internaldate_match:
+                internaldate_utc = _parse_internaldate(internaldate_match.group(1))
+
             msg = message_from_bytes(msg_data[0][1])
             msg_date = msg.get("Date")
-            if not msg_date:
-                _LOGGER.debug("Email %s has no Date header", num)
-                continue
+            msg_datetime = None
+            if msg_date:
+                msg_datetime = email.utils.parsedate_to_datetime(msg_date)
+                if msg_datetime.tzinfo is None:
+                    msg_datetime = msg_datetime.replace(tzinfo=timezone.utc)
+                else:
+                    msg_datetime = msg_datetime.astimezone(timezone.utc)
 
-            msg_datetime = email.utils.parsedate_to_datetime(msg_date)
-            if msg_datetime.tzinfo is None:
-                msg_datetime = msg_datetime.replace(tzinfo=timezone.utc)
-
-            if msg_datetime <= since:
+            received_utc = internaldate_utc if internaldate_utc is not None else msg_datetime
+            if received_utc is None:
+                _LOGGER.debug("Email %s: no INTERNALDATE or Date header, skipping", num)
                 continue
 
             subject = self._decode_header(msg.get("Subject", ""))
@@ -210,26 +258,63 @@ class AmazonOrdersCoordinator(DataUpdateCoordinator):
 
             status = self._status_from_subject(subject_lower)
             if not status:
+                _LOGGER.debug(
+                    "Email %s: subject not recognized as order status, skipping: %s",
+                    num,
+                    subject[:80],
+                )
                 continue
 
             body_text = self._extract_text(msg)
             html_body = self._extract_html(msg)
 
-            order_ids = ORDER_REGEX.findall(body_text)
+            # Collect order IDs from both plain text and HTML; many "shipped" emails
+            # put the order number only in the HTML part, so we must check both.
+            order_ids = list(
+                dict.fromkeys(
+                    ORDER_REGEX.findall(body_text)
+                    + (ORDER_REGEX.findall(html_body) if html_body else [])
+                )
+            )
             if not order_ids:
-                _LOGGER.debug("No order numbers found in email: %s", subject)
-                continue  # <-- skip processing this email entirely
+                _LOGGER.debug(
+                    "No order numbers found in email (subject: %s). "
+                    "Checked plain text (%d chars) and HTML (%d chars).",
+                    subject,
+                    len(body_text),
+                    len(html_body) if html_body else 0,
+                )
+                continue
 
             tracking_url = self._extract_tracking_url(html_body) if html_body else None
 
+            updated_ts = (msg_datetime if msg_datetime is not None else received_utc).isoformat()
+            did_update = False
             for order_id in order_ids:
+                # Only overwrite if we don't have this order or this email is newer than stored
+                existing = self._orders.get(order_id)
+                if existing:
+                    try:
+                        existing_updated = _to_utc(
+                            datetime.fromisoformat(existing["updated"])
+                        )
+                        if received_utc < existing_updated:
+                            _LOGGER.debug(
+                                "Order %s: skipping (email %s older than stored)",
+                                order_id,
+                                received_utc,
+                            )
+                            continue
+                    except (ValueError, TypeError):
+                        pass
+
                 self._orders[order_id] = {
                     "status": status,
                     "subject": subject,
-                    "updated": msg_datetime.isoformat(),
+                    "updated": updated_ts,
                     "tracking_url": tracking_url,
                 }
-
+                did_update = True
                 _LOGGER.debug(
                     "Order %s → %s (%s) [tracking: %s]",
                     order_id,
@@ -239,7 +324,7 @@ class AmazonOrdersCoordinator(DataUpdateCoordinator):
                 )
 
             if mark_as_read:
-                _LOGGER.debug("Marking email %s as read", num)
+                _LOGGER.debug("Marking email %s as read (order email processed)", num)
                 mail.store(num, "+FLAGS", "\\Seen")
 
         mail.logout()
