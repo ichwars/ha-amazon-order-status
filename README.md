@@ -19,6 +19,25 @@ We obtain this information via email as Amazon does not publish any public API t
 
 **Installation**
 
+*Custom HACS Repository*
+
+Click here: 
+
+[![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=koconnorgit&repository=ha-amazon-order-status&category=integration)
+
+OR
+
+   * Open HACS (HomeAssistant Custom Solution) in Home Assistant
+   * Click the three dots menu (top right) and select Custom repositories
+   * Put koconnorgit/ha-amazon-order-status for Repository, and Integration for Category, then click "Add".
+   * Click "Explore and Download Repositories" in the lower right.  Search for "Amazon Order Status" and install
+   * Restart Home Assistant
+
+
+
+
+*Manual*
+
 Download the Integration: https://github.com/koconnorgit/ha-amazon-order-status/releases/latest
 
 Place the amazon_order_status folder in your Home Assistant custom_components directory:
@@ -38,7 +57,7 @@ Place the amazon_order_status folder in your Home Assistant custom_components di
 
 ****Restart Home Assistant to detect the new integration.****
 
-**Add the Integration:**
+**After the install, you must add the Integration:**
 
 * Go to Settings → Devices & Services → Add Integration.
 
