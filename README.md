@@ -27,7 +27,7 @@ Click here:
 
 OR
 
-   * Open HACS (HomeAssistant Custom Solution) in Home Assistant
+   * Open HACS (Home Assistant Community Store) in Home Assistant
    * Click the three dots menu (top right) and select Custom repositories
    * Put koconnorgit/ha-amazon-order-status for Repository, and Integration for Category, then click "Add".
    * Click "Explore and Download Repositories" in the lower right.  Search for "Amazon Order Status" and install
