@@ -53,6 +53,7 @@ Place the amazon_order_status folder in your Home Assistant custom_components di
 * options_flow.py
 * manifest.json
 * sensor.py
+* services.yaml
 ```
 
 ****Restart Home Assistant to detect the new integration.****
