@@ -98,6 +98,7 @@ Once configured, this integration creates 5 new sensors:
 The ```sensor.amazon_orders_last_updated``` sensor contains a datestamp indicating the last email check.
 
 The remaining sensors contain the following attributes :
+* ```order_id``` (Amazon Order ID)
 * ```subject``` (contains a truncated order name taken from the subject line of the email)
 * ```updated``` (send date of the email - indicates the date/time of the most recent order update.  This will be an iso date stamp, which can be reformatted via templates in any way you choose. Some examples are below.)
 * ```tracking_url``` (provides the link back to the amazon order tracking page for that order.
@@ -118,40 +119,130 @@ _No orders in this state._
 {% endfor %}
 ```
 
-For Mushroom Card users, here is a more attractive set of widgets:
+Occasionally Amazon ships packages through 3d party couriers and a "Delivered" email is never sent (or drastically delayed).  To account for this, you can manually delete orders from the database.  You can pass the order id to ```amazon_order_status.purge_order``` through dev tools, although it's easier to create a helper and script, and pass values to the script via a button card.
+
+Create a Helper: 
+* Go to Settings > Devices & Services > Helpers
+* Click Create Helper
+* Select "Text"
+* Name: amazon_order_purge_id
+* Click Create
+
+Then create a script:
+* Go to Settings > Automations & scenes > Scripts
+* Click Create script
+* Click Create new script
+* Click the 3 dots in the upper right > Edit in YAML
+* Paste the following:
+```
+sequence:
+  - data_template:
+      order_id: "{{ states('input_text.amazon_order_purge_id') }}"
+    action: amazon_order_status.purge_order
+alias: Purge Amazon Order
+description: ""
+```
+* Click Save.
+
+You can then leverage the helper and script in a dashboard to purge orders by order ID.  Here's a sample set of buttons:
+```
+  - type: horizontal-stack
+    cards:
+      - type: entities
+        entities:
+          - entity: input_text.amazon_order_purge_id
+            name: Order ID to purge
+            secondary_info: none
+      - show_name: true
+        show_icon: true
+        type: button
+        name: Purge order
+        icon: mdi:delete
+        tap_action:
+          action: call-service
+          service: script.turn_on
+          target:
+            entity_id: script.purge_amazon_order
+        hold_action:
+          action: none
+        show_state: false
+        icon_height: 20px
+```
+
+Here is a complete Mushroom Card template stack, including more attractive widgets and UI for pasting order IDs and purging orders as needed:
 ```
 type: vertical-stack
 cards:
-  - type: markdown
-    title: 🟡 Ordered
-    content: >
-      {% for o in state_attr('sensor.amazon_orders_ordered', 'orders') or [] %}
-      • **{{ o.subject }}**  Updated: {{o.updated | as_timestamp |
-      timestamp_custom('%b %d at %I:%M %p') }} [Open]({{ o.tracking_url }}) {{
-      '\n' }} {% else %} _None_ {% endfor %}
-  - type: markdown
-    title: 🚚 Shipped
-    content: >
-      {% for o in state_attr('sensor.amazon_orders_shipped', 'orders') or [] %}
-      • **{{ o.subject }}**   Updated: {{o.updated | as_timestamp |
-      timestamp_custom('%b %d at %I:%M %p') }}[Track]({{ o.tracking_url }}) {{
-      '\n' }} {% else %} _None_ {% endfor %}
-  - type: markdown
-    title: 🚚 Out for Delivery
-    content: >
-      {% for o in state_attr('sensor.amazon_orders_out_for_delivery', 'orders') or [] %}
-      • **{{ o.subject }}**   Updated: {{o.updated | as_timestamp |
-      timestamp_custom('%b %d at %I:%M %p') }}[Track]({{ o.tracking_url }}) {{
-      '\n' }} {% else %} _None_ {% endfor %}
-  - type: markdown
-    title: 📬 Delivered
-    content: |2
-
-        {% for o in state_attr('sensor.amazon_orders_delivered', 'orders') or [] %}
-        • **{{ o.subject }}** Updated: {{o.updated | as_timestamp | timestamp_custom('%b %d at %I:%M %p') }} [Open]({{ o.tracking_url }}) {{ '\n' }}
-        {% else %}
-        _None_
-        {% endfor %}
+  - type: conditional
+    conditions:
+      - entity: sensor.amazon_orders_ordered
+        state_not: "0"
+    card:
+      type: markdown
+      title: 🟡 Ordered
+      content: >
+        {% for o in state_attr('sensor.amazon_orders_ordered', 'orders') or []
+        %} • **{{ o.subject }}**  Updated: {{ o.updated | as_timestamp |
+        timestamp_custom('%b %d at %I:%M %p') }} [Open]({{ o.tracking_url }})
+        Order ID: {{ o.order_id }} {{ '\n' }}{% else %} _None_ {% endfor %}
+  - type: conditional
+    conditions:
+      - entity: sensor.amazon_orders_shipped
+        state_not: "0"
+    card:
+      type: markdown
+      title: 🚚 Shipped
+      content: >
+        {% for o in state_attr('sensor.amazon_orders_shipped', 'orders') or []
+        %} • **{{ o.subject }}**   Updated: {{o.updated | as_timestamp |
+        timestamp_custom('%b %d at %I:%M %p') }} [Track]({{ o.tracking_url }})
+        Order ID: {{ o.order_id }} {{ '\n' }} {% else %} _None_ {% endfor %}
+  - type: conditional
+    conditions:
+      - entity: sensor.amazon_orders_out_for_delivery
+        state_not: "0"
+    card:
+      type: markdown
+      title: 🚚 Out for Delivery
+      content: >
+        {% for o in state_attr('sensor.amazon_orders_out_for_delivery',
+        'orders') or [] %} • **{{ o.subject }}**   Updated: {{o.updated |
+        as_timestamp | timestamp_custom('%b %d at %I:%M %p') }} [Track]({{
+        o.tracking_url }}) Order ID: {{ o.order_id }} {{ '\n' }} {% else %}
+        _None_ {% endfor %}
+  - type: conditional
+    conditions:
+      - entity: sensor.amazon_orders_delivered
+        state_not: "0"
+    card:
+      type: markdown
+      title: 📬 Delivered
+      content: >
+        {% for o in state_attr('sensor.amazon_orders_delivered', 'orders') or []
+        %} • **{{ o.subject }}** Updated: {{o.updated | as_timestamp |
+        timestamp_custom('%b %d at %I:%M %p') }} [Open]({{ o.tracking_url }})
+        Order ID: {{ o.order_id }} {{ '\n' }} {% else %} _None_ {% endfor %}
+  - type: horizontal-stack
+    cards:
+      - type: entities
+        entities:
+          - entity: input_text.amazon_order_purge_id
+            name: Order ID to purge
+            secondary_info: none
+      - show_name: true
+        show_icon: true
+        type: button
+        name: Purge order
+        icon: mdi:delete
+        tap_action:
+          action: call-service
+          service: script.turn_on
+          target:
+            entity_id: script.purge_amazon_order
+        hold_action:
+          action: none
+        show_state: false
+        icon_height: 20px
 
 
 ```
