@@ -135,7 +135,8 @@ class AmazonOrdersCoordinator(DataUpdateCoordinator):
 
         await self.async_save_state(now)
 
-        return list(self._orders.values())
+        # Include order_id in each item so sensors and services can use it
+        return [{**v, "order_id": k} for k, v in self._orders.items()]
 
     @callback
     def async_update_interval(self, minutes: int):
@@ -184,6 +185,19 @@ class AmazonOrdersCoordinator(DataUpdateCoordinator):
             )
             self._orders.pop(order_id, None)
 
+    async def async_purge_order(self, order_id: str) -> bool:
+        """Remove a specific order from tracking and persist state. Returns True if removed."""
+        if order_id not in self._orders:
+            return False
+        self._orders.pop(order_id, None)
+        _LOGGER.debug("Purged order %s by user request", order_id)
+        now = self.last_check or datetime.now(timezone.utc)
+        await self.async_save_state(now)
+        self.async_set_updated_data(
+            [{**v, "order_id": k} for k, v in self._orders.items()]
+        )
+        return True
+
     def _fetch_and_parse_emails(self, last_check: datetime | None, now: datetime):
         """Connect to IMAP and parse Amazon emails."""
         email_addr = self.entry.data["email"]
@@ -201,8 +215,8 @@ class AmazonOrdersCoordinator(DataUpdateCoordinator):
             since = last_check
             _LOGGER.debug("Checking emails since last run: %s", since)
         else:
-            since = now - timedelta(days=20)
-            _LOGGER.debug("First run: checking last 20 days")
+            since = now - timedelta(days=14)
+            _LOGGER.debug("First run: checking last 14 days")
 
         since_utc = _to_utc(since)
         # IMAP SINCE is interpreted in the server's timezone (e.g. Gmail uses PST), so

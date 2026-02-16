@@ -1,0 +1,13 @@
+# Copy this script into Home Assistant so the Purge order button works.
+#
+# Settings → Automations & scenes → Scripts → Add script → (paste in YAML mode)
+#
+# IMPORTANT: Use "data_template" so the order_id is read when you tap the button.
+# Using "data" would pass the literal template string and the order would not be found.
+#
+purge_amazon_order:
+  alias: Purge Amazon order
+  sequence:
+    - service: amazon_order_status.purge_order
+      data_template:
+        order_id: "{{ states('input_text.amazon_order_purge_id') }}"

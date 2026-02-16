@@ -68,6 +68,7 @@ class AmazonOrderStatusSensor(CoordinatorEntity, Entity):
 
         return [
             {
+                "order_id": data.get("order_id"),
                 "subject": data.get("subject"),
                 "updated": data.get("updated"),
                 "tracking_url": data.get("tracking_url"),

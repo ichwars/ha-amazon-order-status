@@ -11,5 +11,7 @@ CONF_DELIVERED_RETENTION_DAYS = "delivered_retention_days"
 ERROR_CANNOT_CONNECT = "cannot_connect"
 ERROR_INVALID_AUTH = "invalid_auth"
 
+SERVICE_PURGE_ORDER = "purge_order"
+ATTR_ORDER_ID = "order_id"
 
 DEFAULT_POLL_INTERVAL = 1800  # 30 minutes
