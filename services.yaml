@@ -1,0 +1,10 @@
+# Service definitions for Amazon Order Status
+# https://developers.home-assistant.io/docs/dev_101_services
+
+purge_order:
+  description: Remove a specific order from tracking. The order will no longer appear in the sensors.
+  fields:
+    order_id:
+      description: The Amazon order number to remove (e.g. 123-4567890-1234567). Copy from sensor attributes.
+      required: true
+      example: "123-4567890-1234567"
