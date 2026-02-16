@@ -5,5 +5,5 @@
   "homeassistant": "2026.1.0",
   "render_readme": true,
   "zip_release": false,
-  "hacs": "integration"
+  "hacs": "2.0.4"
 }
