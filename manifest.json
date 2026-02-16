@@ -1,0 +1,11 @@
+{
+  "domain": "amazon_order_status",
+  "name": "Amazon Order Status",
+  "codeowners": ["@koconnorgit"],
+  "config_flow": true,
+  "documentation": "https://github.com/koconnorgit/ha-amazon-order-status",
+  "iot_class": "local_polling",
+  "issue_tracker": "https://github.com/koconnorgit/ha-amazon-order-status/issues",
+  "requirements": ["beautifulsoup4"],
+  "version": "1.1.0"
+}
