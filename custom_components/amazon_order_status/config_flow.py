@@ -5,17 +5,24 @@ import voluptuous as vol
 import imaplib
 import socket
 
-from .const import DOMAIN
+from .const import DOMAIN, CONF_IMAP_FOLDER
 from .options_flow import AmazonOrderStatusOptionsFlow
 
 
-async def validate_imap_config(hass, host, port, username, password):
+def _select_folder_quoted(imap, folder: str) -> None:
+    """Select IMAP mailbox using quoted name (IMAP4rev2-compatible)."""
+    quoted = '"' + folder.replace("\\", "\\\\").replace('"', '\\"') + '"'
+    imap._simple_command("SELECT", quoted.encode("utf-8"))
+
+
+async def validate_imap_config(hass, host, port, username, password, folder=None):
     """Test connection to IMAP server."""
     def _validate():
         try:
             imap = imaplib.IMAP4_SSL(host, port)
             imap.login(username, password)
-            imap.select("INBOX")
+            folder_to_test = folder.strip() if folder and folder.strip() else "INBOX"
+            _select_folder_quoted(imap, folder_to_test)
             imap.logout()
             return None
         except imaplib.IMAP4.error:
@@ -44,6 +51,7 @@ class AmazonOrdersConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 user_input.get("imap_port", 993),
                 user_input["username"],
                 user_input["password"],
+                user_input.get(CONF_IMAP_FOLDER),
             )
 
             if error is None:
@@ -61,6 +69,7 @@ class AmazonOrdersConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         "update_interval": user_input.get("poll_interval", 5),
                         "delivered_retention_days": 30,
                         "mark_as_read": user_input.get("mark_as_read", True),
+                        CONF_IMAP_FOLDER: user_input.get(CONF_IMAP_FOLDER, ""),
                     },
                 )
 
@@ -76,6 +85,7 @@ class AmazonOrdersConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 vol.Optional("imap_port", default=993): int,
                 vol.Optional("poll_interval", default=5): int,
                 vol.Optional("mark_as_read", default=True): bool,
+                vol.Optional(CONF_IMAP_FOLDER, default=""): str,
             }
         )
 

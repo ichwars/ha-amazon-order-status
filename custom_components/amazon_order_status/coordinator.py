@@ -18,7 +18,7 @@ from homeassistant.helpers.storage import Store
 import html
 from bs4 import BeautifulSoup
 
-from .const import CONF_MARK_AS_READ
+from .const import CONF_MARK_AS_READ, CONF_IMAP_FOLDER
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -57,12 +57,48 @@ ORDER_REGEX = re.compile(r"Order\s*#\s*([0-9\-]{10,})", re.IGNORECASE)
 # IMAP INTERNALDATE format: "08-Feb-2025 18:30:00 +0000"
 INTERNALDATE_RE = re.compile(r'INTERNALDATE\s+"([^"]+)"', re.IGNORECASE)
 
+# English month abbreviations for IMAP date (RFC 3501); avoid locale-dependent strftime
+_IMAP_MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+
+
+def _imap_date_str(dt: datetime) -> str:
+    """Return date in IMAP format dd-Mon-yyyy (English month) for SEARCH SINCE."""
+    return f"{dt.day:02d}-{_IMAP_MONTHS[dt.month - 1]}-{dt.year}"
+
 STATUS_MAP = {
     "ordered": "Ordered",
     "shipped": "Shipped",
     "out for delivery": "Out for delivery",
     "delivered": "Delivered",
 }
+
+
+def _select_folder(mail: imaplib.IMAP4, folder: str) -> None:
+    """Select an IMAP mailbox. Use standard select() when safe; otherwise send SELECT line ourselves.
+
+    For names with space or parentheses, imaplib sends SELECT Test folder (unquoted), which
+    FastMail rejects as 'Invalid modifier list'. Sending bytes via _command can be treated
+    as a literal. So we build and send the exact line: TAG SELECT "folder"\r\n via mail.send(),
+    then wait for the response and set state.
+    """
+    if any(c in folder for c in " ()"):
+        mail.untagged_responses = {}
+        quoted = '"' + folder.replace("\\", "\\\\").replace('"', '\\"') + '"'
+        tag = mail._new_tag()
+        tag_str = tag.decode("ascii") if isinstance(tag, bytes) else tag
+        line = tag_str + " SELECT " + quoted + "\r\n"
+        mail.send(line.encode("utf-8"))
+        typ, data = mail._command_complete("SELECT", tag)
+        if typ != "OK":
+            msg = data[-1].decode("utf-8", "replace") if data and isinstance(data[-1], bytes) else str(data)
+            raise mail.error(
+                "Mailbox %r not found: %s. Check the folder name in integration options "
+                "(case-sensitive). Use INBOX for the main inbox, or try a path like INBOX.Test folder."
+                % (folder, msg)
+            )
+        mail.state = "SELECTED"
+    else:
+        mail.select(folder)
 
 
 class AmazonOrdersCoordinator(DataUpdateCoordinator):
@@ -75,6 +111,9 @@ class AmazonOrdersCoordinator(DataUpdateCoordinator):
         self._orders: Dict[str, dict] = {}
         self.delivered_retention_days = entry.options.get("delivered_retention_days", 7)
         self._mark_as_read = entry.options.get(CONF_MARK_AS_READ, False)
+        # Get IMAP folder from options, default to "INBOX" if empty or not set
+        folder = entry.options.get(CONF_IMAP_FOLDER, "")
+        self._imap_folder = folder.strip() if folder and folder.strip() else "INBOX"
         self.last_check: datetime | None = None
 
         # Determine update interval from options or config entry, default 5 min
@@ -164,6 +203,18 @@ class AmazonOrdersCoordinator(DataUpdateCoordinator):
         self.hass.config_entries.async_update_entry(self.entry, options=new_options)
 
     @callback
+    def async_set_imap_folder(self, folder: str):
+        """Update the IMAP folder to search."""
+        folder_clean = folder.strip() if folder and folder.strip() else "INBOX"
+        self._imap_folder = folder_clean
+        _LOGGER.debug("IMAP folder updated to: %s", self._imap_folder)
+
+        # Update the config entry safely
+        new_options = dict(self.entry.options)
+        new_options[CONF_IMAP_FOLDER] = folder
+        self.hass.config_entries.async_update_entry(self.entry, options=new_options)
+
+    @callback
     def _purge_old_delivered_orders(self, now: datetime):
         """Remove delivered orders older than retention period."""
         if not self._orders:
@@ -209,7 +260,10 @@ class AmazonOrdersCoordinator(DataUpdateCoordinator):
 
         mail = imaplib.IMAP4_SSL(imap_server)
         mail.login(email_addr, password)
-        mail.select("INBOX")
+        # Send SELECT with mailbox as a quoted string so IMAP4rev2 servers (e.g. FastMail)
+        # do not misparse the command as having an invalid modifier list (RFC 9051).
+        _select_folder(mail, self._imap_folder)
+        _LOGGER.debug("Selected IMAP folder: %s", self._imap_folder)
 
         if last_check:
             since = last_check
@@ -222,7 +276,8 @@ class AmazonOrdersCoordinator(DataUpdateCoordinator):
         # IMAP SINCE is interpreted in the server's timezone (e.g. Gmail uses PST), so
         # using the UTC date can ask for "future" emails and return 0. Use one day
         # earlier so we always fetch recent emails; we filter by since_utc in Python.
-        since_date_imap = (since_utc - timedelta(days=1)).strftime("%d-%b-%Y")
+        since_date_imap = _imap_date_str(since_utc - timedelta(days=1))
+        # No charset for date-only criterion; some servers reject CHARSET with SINCE
         typ, data = mail.search(None, f'(SINCE "{since_date_imap}")')
 
         if typ != "OK":

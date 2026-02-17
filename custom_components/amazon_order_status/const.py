@@ -8,6 +8,7 @@ CONF_PASSWORD = "password"
 CONF_POLL_INTERVAL = "poll_interval"
 CONF_MARK_AS_READ = "mark_as_read"
 CONF_DELIVERED_RETENTION_DAYS = "delivered_retention_days"
+CONF_IMAP_FOLDER = "imap_folder"
 ERROR_CANNOT_CONNECT = "cannot_connect"
 ERROR_INVALID_AUTH = "invalid_auth"
 

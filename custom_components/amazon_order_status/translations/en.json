@@ -7,16 +7,16 @@
     "step": {
       "user": {
         "title": "Amazon Orders",
-        "description": "Configure IMAP access for Amazon order emails"
+        "description": "Configure IMAP access for Amazon order emails.  imap_folder is an optional field - leave blank for the root inbox, or provide a folder name to search a specific folder. Note that some email providers require 'INBOX/Folder name', others will accept simply 'Folder name'"
       }
     }
   },
   "options": {
     "step": {
-      "init": {
-        "title": "Amazon Order Options",
-        "description": "Configure how Home Assistant tracks and processes Amazon order emails.  delivered_retention_days  - How many days should HA track delivered orders?     update_interval - how often should HA check for delivery updates?"
-      }
+        "init": {
+          "title": "Amazon Order Options",
+          "description": "Configure how Home Assistant tracks and processes Amazon order emails.  delivered_retention_days  - How many days should HA track delivered orders?     update_interval - how often should HA check for delivery updates?     imap_folder - Optional email folder to search (leave empty for INBOX)."
+        }
     }
   },
   "services": {

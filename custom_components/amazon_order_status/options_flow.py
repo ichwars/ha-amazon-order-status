@@ -4,7 +4,7 @@ from homeassistant import config_entries
 import voluptuous as vol
 from homeassistant.helpers import config_validation as cv
 
-from .const import DOMAIN
+from .const import DOMAIN, CONF_IMAP_FOLDER
 
 
 class AmazonOrderStatusOptionsFlow(config_entries.OptionsFlow):
@@ -40,6 +40,10 @@ class AmazonOrderStatusOptionsFlow(config_entries.OptionsFlow):
                     coordinator.async_set_mark_as_read(
                         user_input["mark_as_read"]
                     )
+                if CONF_IMAP_FOLDER in user_input:
+                    coordinator.async_set_imap_folder(
+                        user_input[CONF_IMAP_FOLDER]
+                    )
 
             return self.async_create_entry(title="", data=user_input)
 
@@ -61,6 +65,10 @@ class AmazonOrderStatusOptionsFlow(config_entries.OptionsFlow):
                     "mark_as_read",
                     default=options.get("mark_as_read", True),
                 ): cv.boolean,
+                vol.Optional(
+                    CONF_IMAP_FOLDER,
+                    default=options.get(CONF_IMAP_FOLDER, ""),
+                ): str,
             }
         )
 
