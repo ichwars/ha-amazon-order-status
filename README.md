@@ -75,7 +75,7 @@ Option - Description
 * ```delivered_retention_days```: 	How long Home Assistant should keep a record of delivered items. Default: 30 days.
 * ```update_interval```: 	How often Home Assistant should check your Amazon emails for order updates, in minutes. Default: 5 minutes.
 * ```mark_as_read```: 	If enabled, emails containing Amazon delivery updates will be automatically marked as read after processing. Default: True.
-* ```inbox_folder```: Optional - Specify a folder to search for emails rather than the default INBOX.  If left blank, defaults to searching INBOX.  If a folder is specified (Either "Folder Name" or "INBOX/Folder Name" depending on provider) email searches will be limited to that folder. 
+* ```imap_folder```: Optional - Specify a folder to search for emails rather than the default INBOX.  If left blank, defaults to searching INBOX.  If a folder is specified (Either "Folder Name" or "INBOX/Folder Name" depending on provider) email searches will be limited to that folder. 
 
 Upon initial installation, this integration will scan the previous 14 days worth of emails for Amazon order emails.  Depending on the volume of email in the inbox, this initial scan could take anywhere from a few seconds to a few minutes.  During this time, the integration dialog will display a spinning icon.  You can check the progress of the initial data load by looking at the console of your home assistant instance for debug log messages.  Once the initial data load is complete, the integration will keep track of its last-scanned date/time and perform only rapid scans of the messages recieved since the last check.
 
