@@ -322,6 +322,16 @@ class AmazonOrdersCoordinator(DataUpdateCoordinator):
                 _LOGGER.debug("Email %s: no INTERNALDATE or Date header, skipping", num)
                 continue
 
+            # Ignore emails that arrived before our last check (avoids re-adding purged orders)
+            if last_check is not None and received_utc < since_utc:
+                _LOGGER.debug(
+                    "Email %s: received %s before last check %s, skipping",
+                    num,
+                    received_utc,
+                    since_utc,
+                )
+                continue
+
             subject = self._decode_header(msg.get("Subject", ""))
             subject_lower = subject.lower()
 
