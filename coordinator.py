@@ -5,6 +5,7 @@ from __future__ import annotations
 import imaplib
 import logging
 import re
+import socket
 from datetime import datetime, timedelta, timezone
 import email.utils
 from email import message_from_bytes
@@ -161,18 +162,28 @@ class AmazonOrdersCoordinator(DataUpdateCoordinator):
 
         last_check = await self.async_load_last_check()
         now = datetime.now(timezone.utc)
-        self.last_check = now
+        # Only advance last_check and save state on successful IMAP run.
+        try:
+            await self.hass.async_add_executor_job(
+                self._fetch_and_parse_emails,
+                last_check,
+                now,
+            )
 
-        await self.hass.async_add_executor_job(
-            self._fetch_and_parse_emails,
-            last_check,
-            now,
-        )
+            # Purge old delivered orders
+            self._purge_old_delivered_orders(now)
 
-        # Purge old delivered orders
-        self._purge_old_delivered_orders(now)
-
-        await self.async_save_state(now)
+            await self.async_save_state(now)
+            self.last_check = now
+        except (imaplib.IMAP4.error, OSError, socket.gaierror) as err:
+            # Treat connectivity/IMAP errors as transient: keep last known orders and
+            # do not mark entities unavailable. We *don't* advance last_check so that
+            # we don't skip any window once connectivity is restored.
+            _LOGGER.warning(
+                "IMAP update failed (%s). Keeping last known orders and last_check.",
+                err,
+            )
+            # Fall through and return existing _orders without raising.
 
         # Include order_id in each item so sensors and services can use it
         return [{**v, "order_id": k} for k, v in self._orders.items()]
