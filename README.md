@@ -1,5 +1,4 @@
-[![GitHub Release](https://img.shields.io/github/v/release/koconnorgit/ha-amazon-order-status)](https://github.com/koconnorgit/ha-amazon-order-status/releases/latest)
-[![Static Badge](https://img.shields.io/badge/HACS-Custom-blue)](https://github.com/hacs/integration)
+
 
 
 
