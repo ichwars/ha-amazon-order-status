@@ -53,7 +53,12 @@ STORAGE_VERSION = 1
 STORAGE_KEY = "amazon_order_status"
 ORDERS_KEY = "orders"
 
-ORDER_REGEX = re.compile(r"Order\s*#\s*([0-9\-]{10,})", re.IGNORECASE)
+ORDER_REGEX = re.compile(
+    r"(?:Order|Purchase)\s*(?:#|number|ID|No\.?)?\s*[:#]?\s*"
+    r"([0-9]{3}-[0-9]{7}-[0-9]{7}|[0-9\-]{10,})",
+    re.IGNORECASE,
+)
+
 # IMAP INTERNALDATE format: "08-Feb-2025 18:30:00 +0000"
 INTERNALDATE_RE = re.compile(r'INTERNALDATE\s+"([^"]+)"', re.IGNORECASE)
 
@@ -66,12 +71,15 @@ def _imap_date_str(dt: datetime) -> str:
     return f"{dt.day:02d}-{_IMAP_MONTHS[dt.month - 1]}-{dt.year}"
 
 STATUS_MAP = {
+    "successfully placed your order": "Ordered",
+    "we've received your order": "Ordered",
+    "preparing your automatic refill order": "Ordered",
+    "automatic refill order": "Ordered",
     "ordered": "Ordered",
     "shipped": "Shipped",
     "out for delivery": "Out for delivery",
     "delivered": "Delivered",
 }
-
 
 def _select_folder(mail: imaplib.IMAP4, folder: str) -> None:
     """Select an IMAP mailbox. Use standard select() when safe; otherwise send SELECT line ourselves.
