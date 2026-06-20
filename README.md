@@ -99,7 +99,9 @@ Upon initial installation, this integration scans the previous ```initial_scan_d
 
 **Upgrade and Migration**
 
-Version ```1.4.8``` keeps existing tracked orders and can read the legacy global storage key automatically. After updating through HACS or manually replacing the integration files, restart Home Assistant.
+Version ```1.4.9``` adds grouped options, complete option descriptions, safer dashboard examples, and rescan enrichment for missing body-derived details such as item images. After updating through HACS or manually replacing the integration files, restart Home Assistant.
+
+Version ```1.4.8``` keeps existing tracked orders and can read the legacy global storage key automatically.
 
 Version ```1.4.7``` changed entity unique IDs to include the config entry ID so multiple Amazon Order Status entries can coexist. Existing single-entry installations may see newly created entities after updating from older releases; remove old disabled/orphaned entities from the entity registry if Home Assistant keeps them around.
 
