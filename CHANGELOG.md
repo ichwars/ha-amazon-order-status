@@ -1,5 +1,33 @@
 # Changelog
 
+## 1.4.7
+
+### Added
+
+- Reconfigure flow for IMAP connection settings.
+- Sender-domain validation for Amazon status emails.
+- Privacy options to hide order IDs, item titles, and tracking URLs from sensor attributes.
+- Privacy filtering for raw subject and history details when order IDs or item titles are hidden.
+- German translations.
+- Optional `config_entry_id` service field for multi-entry setups.
+- CI workflow for syntax, JSON, and regression tests.
+
+### Changed
+
+- Sensors now use Home Assistant `SensorEntity` with `native_value`, device info, and diagnostic category for the last-updated sensor.
+- Config and options flows now use Home Assistant selectors with bounded numeric inputs.
+- Options changes reload the config entry through a Home Assistant update listener.
+- Subject-based matching now refuses ambiguous item-title matches instead of updating multiple orders.
+- Tracking URLs are only exposed when they point to HTTPS Amazon domains.
+
+### Fixed
+
+- IMAP scan failures no longer advance `last_check`, preventing missed order emails after transient search/login failures.
+- Manual rescans with `clear_existing` no longer persist an empty order list when the rescan fails.
+- Custom IMAP ports are now used by the real scan path, not only by config validation.
+- IMAP connections now log out through `finally` cleanup.
+- Invalid stored timestamps no longer crash retention cleanup.
+
 ## 1.4.6
 
 ### Added

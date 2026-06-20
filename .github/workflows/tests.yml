@@ -1,0 +1,31 @@
+name: Tests
+
+on:
+  pull_request:
+  push:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Compile Python
+        run: python -m py_compile custom_components/amazon_order_status/*.py tests/test_parser_helpers.py
+      - name: Validate JSON
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          for path in [
+              Path("custom_components/amazon_order_status/manifest.json"),
+              Path("custom_components/amazon_order_status/translations/en.json"),
+              Path("custom_components/amazon_order_status/translations/de.json"),
+          ]:
+              json.loads(path.read_text(encoding="utf-8"))
+          PY
+      - name: Run regression tests
+        run: python -m unittest tests.test_parser_helpers

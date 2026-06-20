@@ -6,7 +6,9 @@ import importlib.util
 import sys
 import types
 from datetime import datetime, timezone
+from email.message import EmailMessage
 from pathlib import Path
+from types import SimpleNamespace
 import unittest
 
 
@@ -24,6 +26,7 @@ def _load_coordinator_module():
     helpers = types.ModuleType("homeassistant.helpers")
     update_coordinator = types.ModuleType("homeassistant.helpers.update_coordinator")
     update_coordinator.DataUpdateCoordinator = object
+    update_coordinator.UpdateFailed = Exception
     storage = types.ModuleType("homeassistant.helpers.storage")
     storage.Store = object
     sys.modules.update(
@@ -104,6 +107,49 @@ class ParserHelpersTest(unittest.TestCase):
             ),
         )
 
+    def test_subject_item_matching_skips_ambiguous_items(self):
+        fake = coordinator.AmazonOrdersCoordinator.__new__(
+            coordinator.AmazonOrdersCoordinator
+        )
+        fake._orders = {
+            "304-1111111-1111111": {
+                "status": "Ordered",
+                "item_title": "Fitorb Smart Ring Pro",
+            },
+            "304-2222222-2222222": {
+                "status": "Shipped",
+                "item_title": "Fitorb Smart Ring Pro",
+            },
+            "304-3333333-3333333": {
+                "status": "Delivered",
+                "item_title": "Fitorb Smart Ring Pro",
+            },
+        }
+
+        self.assertEqual(
+            ["304-1111111-1111111", "304-2222222-2222222"],
+            fake._order_ids_for_subject_item("Versendet: Fitorb Smart Ring Pro"),
+        )
+
+    def test_message_sender_must_be_amazon_domain(self):
+        amazon_msg = EmailMessage()
+        amazon_msg["From"] = "Amazon.de <shipment-tracking@amazon.de>"
+        phishing_msg = EmailMessage()
+        phishing_msg["From"] = "Amazon.de <shipment-tracking@amazon.de.evil.test>"
+
+        self.assertTrue(coordinator._message_from_amazon(amazon_msg))
+        self.assertFalse(coordinator._message_from_amazon(phishing_msg))
+
+    def test_safe_amazon_url_rejects_non_amazon_hosts(self):
+        self.assertEqual(
+            "https://www.amazon.de/gp/r.html?x=1",
+            coordinator._safe_amazon_url("https://www.amazon.de/gp/r.html?x=1"),
+        )
+        self.assertIsNone(
+            coordinator._safe_amazon_url("https://www.amazon.de.evil.test/gp/r.html")
+        )
+        self.assertIsNone(coordinator._safe_amazon_url("http://www.amazon.de/gp/r.html"))
+
     def test_history_deduplicates_events(self):
         event = coordinator._history_entry(
             "Ordered",
@@ -148,10 +194,55 @@ class ParserHelpersTest(unittest.TestCase):
             "updated_count",
             "matched_by_subject_count",
             "skipped_no_order_id",
+            "skipped_sender",
+            "skipped_ambiguous_subject_match",
             "skipped_status_regression",
             "failed_fetch_count",
         ):
             self.assertEqual(0, stats[key])
+
+    def test_search_failure_returns_unsuccessful_scan_result(self):
+        class SearchFailMail:
+            def login(self, _email, _password):
+                return "OK", []
+
+            def select(self, _folder):
+                return "OK", []
+
+            def search(self, *_args):
+                return "NO", []
+
+            def logout(self):
+                self.logged_out = True
+
+        mail = SearchFailMail()
+        fake = coordinator.AmazonOrdersCoordinator.__new__(
+            coordinator.AmazonOrdersCoordinator
+        )
+        fake.entry = SimpleNamespace(
+            data={
+                "email": "user@example.com",
+                "password": "secret",
+                "imap_server": "imap.example.com",
+            }
+        )
+        fake._mark_as_read = False
+        fake._initial_scan_days = 14
+        fake._imap_folder = "INBOX"
+        fake._require_amazon_sender = True
+
+        original_imap = coordinator.imaplib.IMAP4_SSL
+        coordinator.imaplib.IMAP4_SSL = lambda *_args: mail
+        try:
+            now = datetime(2026, 6, 20, tzinfo=timezone.utc)
+            result = fake._fetch_and_parse_emails(None, now)
+        finally:
+            coordinator.imaplib.IMAP4_SSL = original_imap
+
+        self.assertFalse(result.success)
+        self.assertEqual("imap_search_failed", result.error)
+        self.assertEqual("imap_search_failed", fake.last_scan_stats["error"])
+        self.assertTrue(mail.logged_out)
 
 
 if __name__ == "__main__":

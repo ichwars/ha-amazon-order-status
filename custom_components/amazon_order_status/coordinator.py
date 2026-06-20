@@ -5,22 +5,42 @@ from __future__ import annotations
 import imaplib
 import logging
 import re
+import socket
 from datetime import datetime, timedelta, timezone
+from dataclasses import dataclass
 import email.utils
 from email import message_from_bytes
 from email.header import decode_header
+from urllib.parse import urlparse
 from typing import Dict
 
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
+from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.helpers.storage import Store
 import html
 from bs4 import BeautifulSoup
 
-from .const import CONF_IMAP_FOLDER, CONF_INITIAL_SCAN_DAYS, CONF_MARK_AS_READ
+from .const import (
+    CONF_EXPOSE_ITEM_TITLE,
+    CONF_EXPOSE_ORDER_ID,
+    CONF_EXPOSE_TRACKING_URL,
+    CONF_IMAP_FOLDER,
+    CONF_INITIAL_SCAN_DAYS,
+    CONF_MARK_AS_READ,
+    CONF_REQUIRE_AMAZON_SENDER,
+)
 
 _LOGGER = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class ScanResult:
+    """Result of one IMAP scan."""
+
+    success: bool
+    processed_until: datetime
+    error: str | None = None
 
 
 def _parse_internaldate(internaldate_str: str) -> datetime | None:
@@ -66,11 +86,31 @@ ORDER_ID_REGEXES = (
     ),
 )
 
+AMAZON_DOMAIN_PATTERN = re.compile(
+    r"(^|\.)amazon\."
+    r"(com|de|co\.uk|fr|it|es|nl|se|pl|com\.be|com\.mx|ca|co\.jp|"
+    r"com\.au|com\.tr|ae|sa|sg|in|com\.br)$",
+    re.IGNORECASE,
+)
+
 # IMAP INTERNALDATE format: "08-Feb-2025 18:30:00 +0000"
 INTERNALDATE_RE = re.compile(r'INTERNALDATE\s+"([^"]+)"', re.IGNORECASE)
 
 # English month abbreviations for IMAP date (RFC 3501); avoid locale-dependent strftime
-_IMAP_MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+_IMAP_MONTHS = (
+    "Jan",
+    "Feb",
+    "Mar",
+    "Apr",
+    "May",
+    "Jun",
+    "Jul",
+    "Aug",
+    "Sep",
+    "Oct",
+    "Nov",
+    "Dec",
+)
 
 
 def _imap_date_str(dt: datetime) -> str:
@@ -89,6 +129,41 @@ def _extract_order_ids_from_text(*texts: str) -> list[str]:
                 if order_id not in order_ids:
                     order_ids.append(order_id)
     return order_ids
+
+
+def _domain_is_amazon(domain: str | None) -> bool:
+    """Return True if an email or URL host belongs to an Amazon domain."""
+    if not domain:
+        return False
+    return AMAZON_DOMAIN_PATTERN.search(domain.lower().strip(".")) is not None
+
+
+def _message_from_amazon(msg) -> bool:
+    """Return True when sender headers point at an Amazon domain."""
+    addresses: list[str] = []
+    for header in ("From", "Sender", "Reply-To", "Return-Path"):
+        value = msg.get(header)
+        if value:
+            addresses.extend(address for _name, address in email.utils.getaddresses([value]))
+
+    for address in addresses:
+        if "@" not in address:
+            continue
+        domain = address.rsplit("@", 1)[-1]
+        if _domain_is_amazon(domain):
+            return True
+    return False
+
+
+def _safe_amazon_url(href: str | None) -> str | None:
+    """Return href only when it is an HTTPS Amazon URL."""
+    if not href:
+        return None
+
+    parsed = urlparse(href)
+    if parsed.scheme != "https" or not _domain_is_amazon(parsed.hostname):
+        return None
+    return href
 
 
 def _extract_item_title(subject: str) -> str | None:
@@ -171,8 +246,10 @@ def _new_scan_stats(folder: str, since: datetime, now: datetime) -> dict:
         "matched_by_subject_count": 0,
         "skipped_before_last_check": 0,
         "skipped_no_date": 0,
+        "skipped_sender": 0,
         "skipped_no_status": 0,
         "skipped_no_order_id": 0,
+        "skipped_ambiguous_subject_match": 0,
         "skipped_status_regression": 0,
         "skipped_older_duplicate": 0,
         "failed_fetch_count": 0,
@@ -296,9 +373,13 @@ class AmazonOrdersCoordinator(DataUpdateCoordinator):
         self._store = Store(hass, STORAGE_VERSION, f"{STORAGE_KEY}_{entry.entry_id}")
         self._legacy_store = Store(hass, STORAGE_VERSION, STORAGE_KEY)
         self._orders: Dict[str, dict] = {}
-        self.delivered_retention_days = entry.options.get("delivered_retention_days", 7)
-        self._initial_scan_days = entry.options.get(CONF_INITIAL_SCAN_DAYS, 14)
+        self.delivered_retention_days = int(entry.options.get("delivered_retention_days", 7))
+        self._initial_scan_days = int(entry.options.get(CONF_INITIAL_SCAN_DAYS, 14))
         self._mark_as_read = entry.options.get(CONF_MARK_AS_READ, False)
+        self._require_amazon_sender = entry.options.get(CONF_REQUIRE_AMAZON_SENDER, True)
+        self.expose_order_id = entry.options.get(CONF_EXPOSE_ORDER_ID, True)
+        self.expose_item_title = entry.options.get(CONF_EXPOSE_ITEM_TITLE, True)
+        self.expose_tracking_url = entry.options.get(CONF_EXPOSE_TRACKING_URL, True)
         # Get IMAP folder from options, default to "INBOX" if empty or not set
         folder = entry.options.get(CONF_IMAP_FOLDER, "")
         self._imap_folder = folder.strip() if folder and folder.strip() else "INBOX"
@@ -314,7 +395,8 @@ class AmazonOrdersCoordinator(DataUpdateCoordinator):
             hass,
             _LOGGER,
             name="Amazon Order Status",
-            update_interval=timedelta(minutes=interval_minutes),
+            config_entry=entry,
+            update_interval=timedelta(minutes=int(interval_minutes)),
         )
 
     """ Timestamp storage/retrieval functions to reduce email check time """
@@ -334,7 +416,10 @@ class AmazonOrdersCoordinator(DataUpdateCoordinator):
     async def async_load_last_check(self) -> datetime | None:
         stored = await self._async_load_state()
         if stored and LAST_CHECK_KEY in stored:
-            return datetime.fromisoformat(stored[LAST_CHECK_KEY])
+            try:
+                return datetime.fromisoformat(stored[LAST_CHECK_KEY])
+            except (TypeError, ValueError):
+                _LOGGER.warning("Stored Amazon Order Status last_check is invalid")
         return None
 
     async def async_load_stored_orders(self) -> None:
@@ -386,68 +471,33 @@ class AmazonOrdersCoordinator(DataUpdateCoordinator):
 
         last_check = await self.async_load_last_check()
         now = datetime.now(timezone.utc)
-        self.last_check = now
 
-        await self.hass.async_add_executor_job(
+        scan_result = await self.hass.async_add_executor_job(
             self._fetch_and_parse_emails,
             last_check,
             now,
         )
+        if not scan_result.success:
+            raise UpdateFailed(f"Amazon order IMAP scan failed: {scan_result.error}")
+
+        self.last_check = scan_result.processed_until
 
         # Purge old delivered orders
-        self._purge_old_delivered_orders(now)
+        self._purge_old_delivered_orders(scan_result.processed_until)
 
-        await self.async_save_state(now)
+        await self.async_save_state(scan_result.processed_until)
+        if (
+            self.last_scan_stats.get("email_count", 0) > 0
+            and self.last_scan_stats.get("recognized_count", 0) == 0
+        ):
+            _LOGGER.warning(
+                "Amazon Order Status scanned %d emails in %s but recognized no order status emails",
+                self.last_scan_stats["email_count"],
+                self._imap_folder,
+            )
 
         # Include order_id in each item so sensors and services can use it
         return self._current_data()
-
-    @callback
-    def async_update_interval(self, minutes: int):
-        """Dynamically update the coordinator's refresh interval."""
-        self.update_interval = timedelta(minutes=minutes)
-        _LOGGER.debug("Coordinator update interval set to %d minutes", minutes)
-        self.hass.async_create_task(self.async_refresh())
-
-    @callback
-    def async_set_retention_days(self, days: int):
-        """Update delivered retention days and immediately purge old delivered orders."""
-        self.delivered_retention_days = days
-        _LOGGER.debug("Delivered retention days updated to %d", days)
-        self._purge_old_delivered_orders(datetime.now(timezone.utc))
-
-    @callback
-    def async_set_mark_as_read(self, mark_as_read: bool):
-        """Enable or disable marking emails as read."""
-        self._mark_as_read = mark_as_read
-        _LOGGER.debug("Mark as read option updated: %s", mark_as_read)
-
-        # Update the config entry safely
-        new_options = dict(self.entry.options)
-        new_options[CONF_MARK_AS_READ] = mark_as_read
-        self.hass.config_entries.async_update_entry(self.entry, options=new_options)
-
-    @callback
-    def async_set_initial_scan_days(self, days: int):
-        """Update how many days are scanned when no last-check timestamp exists."""
-        self._initial_scan_days = max(1, min(int(days), 365))
-        _LOGGER.debug("Initial scan days updated to %d", self._initial_scan_days)
-
-        new_options = dict(self.entry.options)
-        new_options[CONF_INITIAL_SCAN_DAYS] = self._initial_scan_days
-        self.hass.config_entries.async_update_entry(self.entry, options=new_options)
-
-    @callback
-    def async_set_imap_folder(self, folder: str):
-        """Update the IMAP folder to search."""
-        folder_clean = folder.strip() if folder and folder.strip() else "INBOX"
-        self._imap_folder = folder_clean
-        _LOGGER.debug("IMAP folder updated to: %s", self._imap_folder)
-
-        # Update the config entry safely
-        new_options = dict(self.entry.options)
-        new_options[CONF_IMAP_FOLDER] = folder
-        self.hass.config_entries.async_update_entry(self.entry, options=new_options)
 
     @callback
     def _purge_old_delivered_orders(self, now: datetime):
@@ -456,12 +506,16 @@ class AmazonOrdersCoordinator(DataUpdateCoordinator):
             return
 
         retention_cutoff = now - timedelta(days=self.delivered_retention_days)
-        to_remove = [
-            order_id
-            for order_id, order in self._orders.items()
-            if order.get("status") == "Delivered"
-            and datetime.fromisoformat(order.get("updated")) < retention_cutoff
-        ]
+        to_remove = []
+        for order_id, order in self._orders.items():
+            if order.get("status") != "Delivered":
+                continue
+            try:
+                updated = datetime.fromisoformat(order.get("updated"))
+            except (TypeError, ValueError):
+                continue
+            if _to_utc(updated) < retention_cutoff:
+                to_remove.append(order_id)
 
         for order_id in to_remove:
             _LOGGER.debug(
@@ -487,6 +541,7 @@ class AmazonOrdersCoordinator(DataUpdateCoordinator):
         days = max(1, min(int(days), 365))
         now = datetime.now(timezone.utc)
         since = now - timedelta(days=days)
+        previous_orders = dict(self._orders)
 
         if clear_existing:
             _LOGGER.debug("Clearing Amazon orders before %d-day rescan", days)
@@ -495,34 +550,42 @@ class AmazonOrdersCoordinator(DataUpdateCoordinator):
             await self.async_load_stored_orders()
 
         _LOGGER.debug("Manual Amazon order rescan started for last %d days", days)
-        await self.hass.async_add_executor_job(
+        scan_result = await self.hass.async_add_executor_job(
             self._fetch_and_parse_emails,
             since,
             now,
         )
-        self.last_check = now
-        self._purge_old_delivered_orders(now)
-        await self.async_save_state(now)
+        if not scan_result.success:
+            if clear_existing:
+                self._orders = previous_orders
+            raise UpdateFailed(f"Amazon order rescan failed: {scan_result.error}")
+
+        self.last_check = scan_result.processed_until
+        self._purge_old_delivered_orders(scan_result.processed_until)
+        await self.async_save_state(scan_result.processed_until)
         self.async_set_updated_data(self._current_data())
         _LOGGER.debug("Manual Amazon order rescan finished with %d tracked orders", len(self._orders))
         return len(self._orders)
 
-    def _fetch_and_parse_emails(self, last_check: datetime | None, now: datetime):
+    def _fetch_and_parse_emails(
+        self,
+        last_check: datetime | None,
+        now: datetime,
+    ) -> ScanResult:
         """Connect to IMAP and parse Amazon emails."""
         email_addr = self.entry.data["email"]
         password = self.entry.data["password"]
         imap_server = self.entry.data["imap_server"]
+        imap_port = int(self.entry.data.get("imap_port", 993))
         mark_as_read = self._mark_as_read
+        mail = None
 
-        _LOGGER.debug("Connecting to IMAP server %s as %s", imap_server, email_addr)
-
-        mail = imaplib.IMAP4_SSL(imap_server)
-        mail.login(email_addr, password)
-        # Send SELECT with mailbox as a quoted string so IMAP4rev2 servers (e.g. FastMail)
-        # do not misparse the command as having an invalid modifier list (RFC 9051).
-        _select_folder(mail, self._imap_folder)
-        _LOGGER.debug("Selected IMAP folder: %s", self._imap_folder)
-
+        _LOGGER.debug(
+            "Connecting to IMAP server %s:%d as %s",
+            imap_server,
+            imap_port,
+            email_addr,
+        )
         if last_check:
             since = last_check
             _LOGGER.debug("Checking emails since last run: %s", since)
@@ -533,192 +596,217 @@ class AmazonOrdersCoordinator(DataUpdateCoordinator):
         scan_stats = _new_scan_stats(self._imap_folder, since, now)
         self.last_scan_stats = scan_stats
 
-        since_utc = _to_utc(since)
-        # IMAP SINCE is interpreted in the server's timezone (e.g. Gmail uses PST), so
-        # using the UTC date can ask for "future" emails and return 0. Use one day
-        # earlier so we always fetch recent emails; we filter by since_utc in Python.
-        since_date_imap = _imap_date_str(since_utc - timedelta(days=1))
-        # No charset for date-only criterion; some servers reject CHARSET with SINCE
-        typ, data = mail.search(None, f'(SINCE "{since_date_imap}")')
+        try:
+            mail = imaplib.IMAP4_SSL(imap_server, imap_port)
+            mail.login(email_addr, password)
+            # Send SELECT with mailbox as a quoted string so IMAP4rev2 servers (e.g. FastMail)
+            # do not misparse the command as having an invalid modifier list (RFC 9051).
+            _select_folder(mail, self._imap_folder)
+            _LOGGER.debug("Selected IMAP folder: %s", self._imap_folder)
 
-        if typ != "OK":
-            _LOGGER.error("IMAP search failed")
-            scan_stats["error"] = "imap_search_failed"
-            mail.logout()
-            return
+            since_utc = _to_utc(since)
+            # IMAP SINCE is interpreted in the server's timezone (e.g. Gmail uses PST), so
+            # using the UTC date can ask for "future" emails and return 0. Use one day
+            # earlier so we always fetch recent emails; we filter by since_utc in Python.
+            since_date_imap = _imap_date_str(since_utc - timedelta(days=1))
+            # No charset for date-only criterion; some servers reject CHARSET with SINCE
+            typ, data = mail.search(None, f'(SINCE "{since_date_imap}")')
 
-        email_nums = data[0].split()
-        scan_stats["email_count"] = len(email_nums)
-        _LOGGER.debug(
-            "Found %d emails since %s (processing all; applying updates when email is newer than stored)",
-            len(email_nums),
-            since_date_imap,
-        )
+            if typ != "OK":
+                _LOGGER.error("IMAP search failed")
+                scan_stats["error"] = "imap_search_failed"
+                return ScanResult(False, since, "imap_search_failed")
 
-        for num in email_nums:
-            typ, msg_data = mail.fetch(num, "(BODY.PEEK[] INTERNALDATE)")
-            if typ != "OK" or not msg_data or not msg_data[0]:
-                _LOGGER.warning("Failed to fetch email %s", num)
-                scan_stats["failed_fetch_count"] += 1
-                continue
-            scan_stats["fetched_count"] += 1
+            email_nums = data[0].split()
+            scan_stats["email_count"] = len(email_nums)
+            _LOGGER.debug(
+                "Found %d emails since %s (processing all; applying updates when email is newer than stored)",
+                len(email_nums),
+                since_date_imap,
+            )
 
-            # Prefer INTERNALDATE (when mailbox received the message) over Date header
-            raw_response = msg_data[0][0]
-            if isinstance(raw_response, bytes):
-                raw_response = raw_response.decode(errors="ignore")
-            internaldate_utc = None
-            internaldate_match = INTERNALDATE_RE.search(raw_response)
-            if internaldate_match:
-                internaldate_utc = _parse_internaldate(internaldate_match.group(1))
+            for num in email_nums:
+                typ, msg_data = mail.fetch(num, "(BODY.PEEK[] INTERNALDATE)")
+                if typ != "OK" or not msg_data or not msg_data[0]:
+                    _LOGGER.warning("Failed to fetch email %s", num)
+                    scan_stats["failed_fetch_count"] += 1
+                    continue
+                scan_stats["fetched_count"] += 1
 
-            msg = message_from_bytes(msg_data[0][1])
-            msg_date = msg.get("Date")
-            msg_datetime = None
-            if msg_date:
-                msg_datetime = email.utils.parsedate_to_datetime(msg_date)
-                if msg_datetime.tzinfo is None:
-                    msg_datetime = msg_datetime.replace(tzinfo=timezone.utc)
-                else:
-                    msg_datetime = msg_datetime.astimezone(timezone.utc)
+                # Prefer INTERNALDATE (when mailbox received the message) over Date header
+                raw_response = msg_data[0][0]
+                if isinstance(raw_response, bytes):
+                    raw_response = raw_response.decode(errors="ignore")
+                internaldate_utc = None
+                internaldate_match = INTERNALDATE_RE.search(raw_response)
+                if internaldate_match:
+                    internaldate_utc = _parse_internaldate(internaldate_match.group(1))
 
-            received_utc = internaldate_utc if internaldate_utc is not None else msg_datetime
-            if received_utc is None:
-                _LOGGER.debug("Email %s: no INTERNALDATE or Date header, skipping", num)
-                scan_stats["skipped_no_date"] += 1
-                continue
-
-            # Ignore emails that arrived before our last check (avoids re-adding purged orders)
-            if last_check is not None and received_utc < since_utc:
-                _LOGGER.debug(
-                    "Email %s: received %s before last check %s, skipping",
-                    num,
-                    received_utc,
-                    since_utc,
-                )
-                scan_stats["skipped_before_last_check"] += 1
-                continue
-
-            subject = self._decode_header(msg.get("Subject", ""))
-            subject_lower = subject.lower()
-
-            status = self._status_from_subject(subject_lower)
-            if not status:
-                _LOGGER.debug(
-                    "Email %s: subject not recognized as order status, skipping: %s",
-                    num,
-                    subject[:80],
-                )
-                scan_stats["skipped_no_status"] += 1
-                continue
-            scan_stats["recognized_count"] += 1
-
-            body_text = self._extract_text(msg)
-            html_body = self._extract_html(msg)
-
-            # Collect order IDs from both plain text and HTML; many "shipped" emails
-            # put the order number only in the HTML part, so we must check both.
-            order_ids = _extract_order_ids_from_text(subject, body_text, html_body)
-            if not order_ids:
-                order_ids = self._order_ids_for_subject_item(subject)
-                if order_ids:
-                    _LOGGER.debug(
-                        "Matched email without order number to existing order(s) %s by subject: %s",
-                        ", ".join(order_ids),
-                        subject,
-                    )
-                    scan_stats["matched_by_subject_count"] += len(order_ids)
-            if not order_ids:
-                _LOGGER.debug(
-                    "No order numbers found in email (subject: %s). "
-                    "Checked plain text (%d chars) and HTML (%d chars).",
-                    subject,
-                    len(body_text),
-                    len(html_body) if html_body else 0,
-                )
-                scan_stats["skipped_no_order_id"] += 1
-                continue
-
-            tracking_url = self._extract_tracking_url(html_body) if html_body else None
-
-            updated_ts = (msg_datetime if msg_datetime is not None else received_utc).isoformat()
-            did_update = False
-            for order_id in order_ids:
-                # Only overwrite if we don't have this order or this email is newer than stored
-                existing = self._orders.get(order_id)
-                if existing:
-                    existing_status_rank = STATUS_RANKS.get(existing.get("status"), -1)
-                    new_status_rank = STATUS_RANKS.get(status, -1)
-                    if new_status_rank < existing_status_rank:
-                        _LOGGER.debug(
-                            "Order %s: skipping status regression %s -> %s",
-                            order_id,
-                            existing.get("status"),
-                            status,
-                        )
-                        scan_stats["skipped_status_regression"] += 1
-                        continue
+                msg = message_from_bytes(msg_data[0][1])
+                msg_date = msg.get("Date")
+                msg_datetime = None
+                if msg_date:
                     try:
-                        existing_updated = _to_utc(
-                            datetime.fromisoformat(existing["updated"])
-                        )
-                        if (
-                            new_status_rank == existing_status_rank
-                            and received_utc < existing_updated
-                        ):
-                            _LOGGER.debug(
-                                "Order %s: skipping (email %s older than stored)",
-                                order_id,
-                                received_utc,
-                            )
-                            scan_stats["skipped_older_duplicate"] += 1
-                            continue
-                    except (ValueError, TypeError):
-                        pass
+                        msg_datetime = email.utils.parsedate_to_datetime(msg_date)
+                    except (TypeError, ValueError):
+                        msg_datetime = None
+                    if msg_datetime is not None:
+                        if msg_datetime.tzinfo is None:
+                            msg_datetime = msg_datetime.replace(tzinfo=timezone.utc)
+                        else:
+                            msg_datetime = msg_datetime.astimezone(timezone.utc)
 
-                stored_subject = subject
-                stored_tracking_url = tracking_url
-                item_title = _extract_item_title(subject)
-                if existing:
-                    existing_subject = existing.get("subject", "")
-                    existing_item_title = existing.get("item_title") or _extract_item_title(
-                        existing_subject
+                received_utc = internaldate_utc if internaldate_utc is not None else msg_datetime
+                if received_utc is None:
+                    _LOGGER.debug("Email %s: no INTERNALDATE or Date header, skipping", num)
+                    scan_stats["skipped_no_date"] += 1
+                    continue
+
+                # Ignore emails that arrived before our last check (avoids re-adding purged orders)
+                if last_check is not None and received_utc < since_utc:
+                    _LOGGER.debug(
+                        "Email %s: received %s before last check %s, skipping",
+                        num,
+                        received_utc,
+                        since_utc,
                     )
-                    if item_title is None:
-                        item_title = existing_item_title
-                    if (
-                        existing_item_title
-                        and not _subject_item_key(subject)
-                    ):
-                        stored_subject = existing_subject
-                    if stored_tracking_url is None:
-                        stored_tracking_url = existing.get("tracking_url")
+                    scan_stats["skipped_before_last_check"] += 1
+                    continue
 
-                event = _history_entry(status, subject, updated_ts, tracking_url)
-                self._orders[order_id] = {
-                    "status": status,
-                    "subject": stored_subject,
-                    "last_subject": subject,
-                    "item_title": item_title,
-                    "updated": updated_ts,
-                    "tracking_url": stored_tracking_url,
-                    "history": _append_history(existing, event),
-                }
-                did_update = True
-                scan_stats["updated_count"] += 1
-                _LOGGER.debug(
-                    "Order %s → %s (%s) [tracking: %s]",
-                    order_id,
-                    status,
-                    subject,
-                    tracking_url,
-                )
+                if self._require_amazon_sender and not _message_from_amazon(msg):
+                    _LOGGER.debug("Email %s: sender is not an allowed Amazon domain", num)
+                    scan_stats["skipped_sender"] += 1
+                    continue
 
-            if mark_as_read:
-                _LOGGER.debug("Marking email %s as read (order email processed)", num)
-                mail.store(num, "+FLAGS", "\\Seen")
+                subject = self._decode_header(msg.get("Subject", ""))
+                subject_lower = subject.lower()
 
-        mail.logout()
+                status = self._status_from_subject(subject_lower)
+                if not status:
+                    _LOGGER.debug(
+                        "Email %s: subject not recognized as order status, skipping: %s",
+                        num,
+                        subject[:80],
+                    )
+                    scan_stats["skipped_no_status"] += 1
+                    continue
+                scan_stats["recognized_count"] += 1
+
+                body_text = self._extract_text(msg)
+                html_body = self._extract_html(msg)
+
+                # Collect order IDs from both plain text and HTML; many "shipped" emails
+                # put the order number only in the HTML part, so we must check both.
+                order_ids = _extract_order_ids_from_text(subject, body_text, html_body)
+                if not order_ids:
+                    matched_order_ids = self._order_ids_for_subject_item(subject)
+                    if len(matched_order_ids) == 1:
+                        order_ids = matched_order_ids
+                        _LOGGER.debug(
+                            "Matched email without order number to existing order by subject"
+                        )
+                        scan_stats["matched_by_subject_count"] += 1
+                    elif len(matched_order_ids) > 1:
+                        _LOGGER.debug(
+                            "Email %s: subject matched multiple active orders, skipping",
+                            num,
+                        )
+                        scan_stats["skipped_ambiguous_subject_match"] += 1
+                        continue
+                if not order_ids:
+                    _LOGGER.debug(
+                        "No order numbers found in email. Checked plain text (%d chars) and HTML (%d chars).",
+                        len(body_text),
+                        len(html_body) if html_body else 0,
+                    )
+                    scan_stats["skipped_no_order_id"] += 1
+                    continue
+
+                tracking_url = self._extract_tracking_url(html_body) if html_body else None
+
+                updated_ts = (msg_datetime if msg_datetime is not None else received_utc).isoformat()
+                for order_id in order_ids:
+                    # Only overwrite if we don't have this order or this email is newer than stored
+                    existing = self._orders.get(order_id)
+                    if existing:
+                        existing_status_rank = STATUS_RANKS.get(existing.get("status"), -1)
+                        new_status_rank = STATUS_RANKS.get(status, -1)
+                        if new_status_rank < existing_status_rank:
+                            _LOGGER.debug(
+                                "Order %s: skipping status regression %s -> %s",
+                                order_id,
+                                existing.get("status"),
+                                status,
+                            )
+                            scan_stats["skipped_status_regression"] += 1
+                            continue
+                        try:
+                            existing_updated = _to_utc(
+                                datetime.fromisoformat(existing["updated"])
+                            )
+                            if (
+                                new_status_rank == existing_status_rank
+                                and received_utc < existing_updated
+                            ):
+                                _LOGGER.debug(
+                                    "Order %s: skipping older duplicate email",
+                                    order_id,
+                                )
+                                scan_stats["skipped_older_duplicate"] += 1
+                                continue
+                        except (ValueError, TypeError):
+                            pass
+
+                    stored_subject = subject
+                    stored_tracking_url = tracking_url
+                    item_title = _extract_item_title(subject)
+                    if existing:
+                        existing_subject = existing.get("subject", "")
+                        existing_item_title = existing.get("item_title") or _extract_item_title(
+                            existing_subject
+                        )
+                        if item_title is None:
+                            item_title = existing_item_title
+                        if (
+                            existing_item_title
+                            and not _subject_item_key(subject)
+                        ):
+                            stored_subject = existing_subject
+                        if stored_tracking_url is None:
+                            stored_tracking_url = existing.get("tracking_url")
+
+                    event = _history_entry(status, subject, updated_ts, tracking_url)
+                    self._orders[order_id] = {
+                        "status": status,
+                        "subject": stored_subject,
+                        "last_subject": subject,
+                        "item_title": item_title,
+                        "updated": updated_ts,
+                        "tracking_url": stored_tracking_url,
+                        "history": _append_history(existing, event),
+                    }
+                    scan_stats["updated_count"] += 1
+                    _LOGGER.debug("Order %s -> %s", order_id, status)
+
+                if mark_as_read:
+                    _LOGGER.debug("Marking email %s as read (order email processed)", num)
+                    mail.store(num, "+FLAGS", "\\Seen")
+
+            return ScanResult(True, now)
+        except imaplib.IMAP4.error as err:
+            scan_stats["error"] = "imap_error"
+            _LOGGER.warning("Amazon order IMAP error: %s", err)
+            return ScanResult(False, since, "imap_error")
+        except (OSError, socket.gaierror) as err:
+            scan_stats["error"] = "connection_error"
+            _LOGGER.warning("Amazon order IMAP connection error: %s", err)
+            return ScanResult(False, since, "connection_error")
+        finally:
+            if mail is not None:
+                try:
+                    mail.logout()
+                except imaplib.IMAP4.error:
+                    pass
 
     def _status_from_subject(self, subject: str) -> str | None:
         """Determine order status from email subject."""
@@ -736,7 +824,7 @@ class AmazonOrdersCoordinator(DataUpdateCoordinator):
         return [
             order_id
             for order_id, order in self._orders.items()
-            if _order_item_key(order) == item_key
+            if order.get("status") != "Delivered" and _order_item_key(order) == item_key
         ]
 
     def _decode_header(self, value: str) -> str:
@@ -803,8 +891,8 @@ class AmazonOrdersCoordinator(DataUpdateCoordinator):
                     href,
                 )
                 if match:
-                    return match.group(0)
-                return href
+                    return _safe_amazon_url(match.group(0))
+                return _safe_amazon_url(href)
 
             # Case 2: Order management links
             if (
@@ -820,6 +908,6 @@ class AmazonOrdersCoordinator(DataUpdateCoordinator):
                     or "ändern" in text
                 )
             ):
-                return href
+                return _safe_amazon_url(href)
 
         return None

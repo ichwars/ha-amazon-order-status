@@ -7,7 +7,11 @@
     "step": {
       "user": {
         "title": "Amazon Orders",
-        "description": "Configure IMAP access for Amazon order emails. initial_scan_days controls how far back the first scan should look when no previous scan timestamp exists. imap_folder is optional - leave blank for the root inbox, or provide a folder name to search a specific folder. Note that some email providers require 'INBOX/Folder name', others will accept simply 'Folder name'."
+        "description": "Configure IMAP access for Amazon order emails. initial_scan_days controls how far back the first scan should look when no previous scan timestamp exists. require_amazon_sender ignores matching subjects unless sender headers use an Amazon domain. imap_folder is optional - leave blank for the root inbox, or provide a folder name to search a specific folder. Note that some email providers require 'INBOX/Folder name', others will accept simply 'Folder name'."
+      },
+      "reconfigure": {
+        "title": "Reconfigure Amazon Orders",
+        "description": "Update IMAP connection settings for this Amazon Order Status entry."
       }
     }
   },
@@ -15,7 +19,7 @@
     "step": {
         "init": {
           "title": "Amazon Order Options",
-          "description": "Configure how Home Assistant tracks and processes Amazon order emails. delivered_retention_days controls how many days delivered orders are kept. update_interval controls how often HA checks for delivery updates. initial_scan_days controls how far back a first scan should look. imap_folder is optional and defaults to INBOX."
+          "description": "Configure how Home Assistant tracks and processes Amazon order emails. delivered_retention_days controls how many days delivered orders are kept. update_interval controls how often HA checks for delivery updates. initial_scan_days controls how far back a first scan should look. require_amazon_sender filters non-Amazon senders. expose_* options control which order details are exposed as sensor attributes. imap_folder is optional and defaults to INBOX."
         }
     }
   },
@@ -27,6 +31,10 @@
         "order_id": {
           "name": "Order ID",
           "description": "The Amazon order number to remove (e.g. 123-4567890-1234567). You can copy this from the sensor's order list."
+        },
+        "config_entry_id": {
+          "name": "Config entry ID",
+          "description": "Optional Home Assistant config entry ID. Leave empty to purge from all loaded Amazon Order Status entries."
         }
       }
     },
@@ -41,6 +49,10 @@
         "clear_existing": {
           "name": "Clear existing",
           "description": "Clear tracked orders before scanning."
+        },
+        "config_entry_id": {
+          "name": "Config entry ID",
+          "description": "Optional Home Assistant config entry ID. Leave empty to rescan all loaded Amazon Order Status entries."
         }
       }
     }

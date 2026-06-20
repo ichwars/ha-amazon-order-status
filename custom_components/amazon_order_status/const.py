@@ -10,6 +10,10 @@ CONF_MARK_AS_READ = "mark_as_read"
 CONF_DELIVERED_RETENTION_DAYS = "delivered_retention_days"
 CONF_IMAP_FOLDER = "imap_folder"
 CONF_INITIAL_SCAN_DAYS = "initial_scan_days"
+CONF_REQUIRE_AMAZON_SENDER = "require_amazon_sender"
+CONF_EXPOSE_ORDER_ID = "expose_order_id"
+CONF_EXPOSE_ITEM_TITLE = "expose_item_title"
+CONF_EXPOSE_TRACKING_URL = "expose_tracking_url"
 ERROR_CANNOT_CONNECT = "cannot_connect"
 ERROR_INVALID_AUTH = "invalid_auth"
 
@@ -18,5 +22,6 @@ SERVICE_RESCAN = "rescan"
 ATTR_ORDER_ID = "order_id"
 ATTR_DAYS = "days"
 ATTR_CLEAR_EXISTING = "clear_existing"
+ATTR_CONFIG_ENTRY_ID = "config_entry_id"
 
 DEFAULT_POLL_INTERVAL = 1800  # 30 minutes

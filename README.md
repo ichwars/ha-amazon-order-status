@@ -20,6 +20,9 @@ We obtain this information via email as Amazon does not publish any public API t
 * Optional automatic marking of processed emails as read.
 * Configurable retention for delivered orders.
 * Scan diagnostics on the last-updated sensor.
+* Sender-domain validation to ignore non-Amazon messages with matching subjects.
+* Privacy options to hide order IDs, item titles, and tracking URLs from sensor attributes.
+* Reconfigure flow for changing IMAP connection settings without deleting the integration.
 * Service for manual rescans without deleting Home Assistant storage files.
 * Fully customizable options via Home Assistant's UI.
 
@@ -82,13 +85,19 @@ Option - Description
 * ```update_interval```: 	How often Home Assistant should check your Amazon emails for order updates, in minutes. Default: 5 minutes.
 * ```initial_scan_days```: How many days of email should be scanned when the integration has no previous scan timestamp. Default: 14 days.
 * ```mark_as_read```: 	If enabled, emails containing Amazon delivery updates will be automatically marked as read after processing. Default: True.
+* ```require_amazon_sender```: If enabled, only messages with sender headers from Amazon domains are processed. Default: True.
+* ```expose_order_id```: If enabled, order IDs are exposed as sensor attributes. Default: True.
+* ```expose_item_title```: If enabled, parsed item titles are exposed as sensor attributes. Default: True.
+* ```expose_tracking_url```: If enabled, Amazon HTTPS tracking/order links are exposed as sensor attributes. Default: True.
 * ```imap_folder```: Optional - Specify a folder to search for emails rather than the default INBOX.  If left blank, defaults to searching INBOX.  If a folder is specified (Either "Folder Name" or "INBOX/Folder Name" depending on provider) email searches will be limited to that folder. 
 
 Upon initial installation, this integration scans the previous ```initial_scan_days``` worth of emails for Amazon order emails. Depending on the volume of email in the inbox, this initial scan could take anywhere from a few seconds to a few minutes. Once the initial data load is complete, the integration keeps track of its last-scanned date/time and performs only rapid scans of the messages received since the last check.
 
 **Upgrade and Migration**
 
-Version ```1.4.6``` keeps existing tracked orders and can read the legacy global storage key automatically. After updating through HACS or manually replacing the integration files, restart Home Assistant.
+Version ```1.4.7``` keeps existing tracked orders and can read the legacy global storage key automatically. After updating through HACS or manually replacing the integration files, restart Home Assistant.
+
+Version ```1.4.7``` changes entity unique IDs to include the config entry ID so multiple Amazon Order Status entries can coexist. Existing single-entry installations may see newly created entities after the update; remove old disabled/orphaned entities from the entity registry if Home Assistant keeps them around.
 
 If you want to rebuild the tracked order list after upgrading, call ```amazon_order_status.rescan``` instead of deleting files from ```/config/.storage```. Use ```clear_existing: true``` for a clean rebuild from the selected lookback window.
 
@@ -125,11 +134,13 @@ The remaining sensors contain the following attributes :
 * ```order_id``` (Amazon Order ID)
 * ```item_title``` (best available item title parsed from Amazon status emails)
 * ```status``` (current normalized status)
-* ```subject``` (display subject; preserves the item title when later emails only contain a generic delivery subject)
-* ```last_subject``` (raw subject from the most recent email that updated the order)
+* ```subject``` (display subject; preserves the item title when later emails only contain a generic delivery subject; only exposed when raw order IDs and item titles are enabled)
+* ```last_subject``` (raw subject from the most recent email that updated the order; only exposed when raw order IDs and item titles are enabled)
 * ```updated``` (send date of the email - indicates the date/time of the most recent order update.  This will be an iso date stamp, which can be reformatted via templates in any way you choose. Some examples are below.)
 * ```tracking_url``` (provides the link back to the amazon order tracking page for that order)
 * ```history``` (compact list of status changes seen for the order)
+
+The ```order_id```, ```item_title```, and ```tracking_url``` attributes can be hidden through the integration options. To avoid indirect leaks, raw subjects in current orders and history events are only exposed when both order IDs and item titles are enabled; tracking URLs are also removed from history when tracking URL exposure is disabled. Tracking URLs are only kept when they point to HTTPS Amazon domains.
 
 This integration tracks the current status for each order. A single order will appear in one status sensor at a time: Ordered → Shipped → Out for delivery → Delivered. Status updates are monotonic, so a late "ordered" email will not move an already-shipped order backwards.
 
@@ -227,6 +238,7 @@ Remove a specific order from tracking by order ID.
 service: amazon_order_status.purge_order
 data:
   order_id: "123-4567890-1234567"
+  # config_entry_id: "optional-home-assistant-config-entry-id"
 ```
 
 ```amazon_order_status.rescan```
@@ -238,6 +250,7 @@ service: amazon_order_status.rescan
 data:
   days: 30
   clear_existing: true
+  # config_entry_id: "optional-home-assistant-config-entry-id"
 ```
 
 Use ```clear_existing: true``` when you want to rebuild the order list from the selected email lookback window. Use ```clear_existing: false``` to keep existing orders and only merge any status emails found in the lookback window.

@@ -1,0 +1,60 @@
+{
+  "config": {
+    "error": {
+      "cannot_connect": "Keine Verbindung zum IMAP-Server möglich",
+      "invalid_auth": "Benutzername oder Passwort ungültig"
+    },
+    "step": {
+      "user": {
+        "title": "Amazon-Bestellungen",
+        "description": "Richte den IMAP-Zugriff für Amazon-Bestellmails ein. initial_scan_days steuert, wie weit der erste Scan zurückschaut, wenn noch kein Scan-Zeitpunkt gespeichert ist. require_amazon_sender ignoriert passende Betreffzeilen, wenn die Absender-Header nicht zu einer Amazon-Domain gehören. imap_folder ist optional - leer lassen für INBOX oder einen Ordnernamen eintragen."
+      },
+      "reconfigure": {
+        "title": "Amazon-Bestellungen neu konfigurieren",
+        "description": "Aktualisiere die IMAP-Verbindungseinstellungen für diesen Amazon-Order-Status-Eintrag."
+      }
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Amazon-Order-Optionen",
+        "description": "Konfiguriere, wie Home Assistant Amazon-Bestellmails verarbeitet. delivered_retention_days steuert, wie lange zugestellte Bestellungen erhalten bleiben. update_interval steuert das Prüfintervall. initial_scan_days steuert den ersten Scan-Zeitraum. require_amazon_sender filtert Nicht-Amazon-Absender. expose_*-Optionen steuern, welche Bestelldetails als Sensorattribute sichtbar sind."
+      }
+    }
+  },
+  "services": {
+    "purge_order": {
+      "name": "Bestellung entfernen",
+      "description": "Entfernt eine bestimmte Bestellung aus der Verfolgung.",
+      "fields": {
+        "order_id": {
+          "name": "Bestellnummer",
+          "description": "Die Amazon-Bestellnummer, die entfernt werden soll, z. B. 123-4567890-1234567."
+        },
+        "config_entry_id": {
+          "name": "Config-Entry-ID",
+          "description": "Optionale Home-Assistant-Config-Entry-ID. Leer lassen, um alle geladenen Amazon-Order-Status-Einträge zu verwenden."
+        }
+      }
+    },
+    "rescan": {
+      "name": "Bestellungen neu scannen",
+      "description": "Scannt Amazon-Bestellmails über einen konfigurierbaren Zeitraum erneut.",
+      "fields": {
+        "days": {
+          "name": "Tage",
+          "description": "Anzahl Tage, die rückwirkend gescannt werden."
+        },
+        "clear_existing": {
+          "name": "Vorhandene löschen",
+          "description": "Vorhandene verfolgte Bestellungen vor dem Scan löschen."
+        },
+        "config_entry_id": {
+          "name": "Config-Entry-ID",
+          "description": "Optionale Home-Assistant-Config-Entry-ID. Leer lassen, um alle geladenen Amazon-Order-Status-Einträge zu verwenden."
+        }
+      }
+    }
+  }
+}

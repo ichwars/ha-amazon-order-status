@@ -1,14 +1,19 @@
 """Amazon Order Status integration."""
 
+from __future__ import annotations
+
 import logging
-from datetime import timedelta
+
 import voluptuous as vol
-from homeassistant.config_entries import ConfigEntry
+from homeassistant.config_entries import ConfigEntry, ConfigEntryState
+from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant, ServiceCall
+from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers import config_validation as cv
 
 from .const import (
     ATTR_CLEAR_EXISTING,
+    ATTR_CONFIG_ENTRY_ID,
     ATTR_DAYS,
     ATTR_ORDER_ID,
     DOMAIN,
@@ -19,11 +24,13 @@ from .coordinator import AmazonOrdersCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
-PLATFORMS = ["sensor"]
-DEFAULT_UPDATE_INTERVAL = 5  # minutes
+PLATFORMS = [Platform.SENSOR]
 
 PURGE_ORDER_SCHEMA = vol.Schema(
-    {vol.Optional(ATTR_ORDER_ID, default=""): cv.string}
+    {
+        vol.Required(ATTR_ORDER_ID): cv.string,
+        vol.Optional(ATTR_CONFIG_ENTRY_ID): cv.string,
+    }
 )
 
 RESCAN_SCHEMA = vol.Schema(
@@ -33,43 +40,67 @@ RESCAN_SCHEMA = vol.Schema(
             vol.Range(min=1, max=365),
         ),
         vol.Optional(ATTR_CLEAR_EXISTING, default=False): cv.boolean,
+        vol.Optional(ATTR_CONFIG_ENTRY_ID): cv.string,
     }
 )
 
 
-def _iter_coordinators(hass: HomeAssistant):
-    """Yield loaded coordinators once, even if stored under multiple keys."""
-    seen: set[int] = set()
-    for value in (hass.data.get(DOMAIN) or {}).values():
-        if isinstance(value, AmazonOrdersCoordinator) and id(value) not in seen:
-            seen.add(id(value))
-            yield value
+def _loaded_coordinators(
+    hass: HomeAssistant,
+    config_entry_id: str | None = None,
+) -> list[AmazonOrdersCoordinator]:
+    """Return loaded coordinators for a service call."""
+    domain_data = hass.data.get(DOMAIN) or {}
+
+    if config_entry_id:
+        entry = hass.config_entries.async_get_entry(config_entry_id)
+        if entry is None:
+            raise ServiceValidationError(f"Config entry {config_entry_id} not found")
+        if entry.state is not ConfigEntryState.LOADED:
+            raise ServiceValidationError(f"Config entry {config_entry_id} not loaded")
+
+        coordinator = domain_data.get(config_entry_id)
+        if not isinstance(coordinator, AmazonOrdersCoordinator):
+            raise ServiceValidationError(
+                f"Amazon Order Status coordinator {config_entry_id} not loaded"
+            )
+        return [coordinator]
+
+    return [
+        coordinator
+        for coordinator in domain_data.values()
+        if isinstance(coordinator, AmazonOrdersCoordinator)
+    ]
 
 
 async def _handle_purge_order(hass: HomeAssistant, call: ServiceCall) -> None:
     """Remove a specific order from tracking."""
-    order_id = (call.data.get(ATTR_ORDER_ID) or "").strip()
+    order_id = call.data[ATTR_ORDER_ID].strip()
     if not order_id:
-        _LOGGER.warning(
-            "purge_order called with empty order_id. "
-            "If using a dashboard button, call script.purge_amazon_order instead so the order ID is read when you tap."
-        )
-        return
+        raise ServiceValidationError("order_id must not be empty")
+
     removed = False
-    for coordinator in _iter_coordinators(hass):
+    for coordinator in _loaded_coordinators(
+        hass,
+        call.data.get(ATTR_CONFIG_ENTRY_ID),
+    ):
         if await coordinator.async_purge_order(order_id):
             removed = True
+
     if not removed:
-        _LOGGER.warning("Order %s not found or already purged", order_id)
+        raise HomeAssistantError(f"Order {order_id} not found or already purged")
 
 
 async def _handle_rescan(hass: HomeAssistant, call: ServiceCall) -> None:
     """Rescan Amazon order emails over a configurable lookback period."""
     days = call.data.get(ATTR_DAYS, 14)
     clear_existing = call.data.get(ATTR_CLEAR_EXISTING, False)
-    rescanned = 0
-    for coordinator in _iter_coordinators(hass):
-        rescanned += 1
+    coordinators = _loaded_coordinators(hass, call.data.get(ATTR_CONFIG_ENTRY_ID))
+
+    if not coordinators:
+        raise ServiceValidationError("No Amazon Order Status coordinator is loaded")
+
+    for coordinator in coordinators:
         count = await coordinator.async_rescan(days, clear_existing)
         _LOGGER.debug(
             "Rescan completed for %s with %d tracked orders",
@@ -77,8 +108,10 @@ async def _handle_rescan(hass: HomeAssistant, call: ServiceCall) -> None:
             count,
         )
 
-    if rescanned == 0:
-        _LOGGER.warning("rescan called but no Amazon Order Status coordinator is loaded")
+
+async def _async_update_listener(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Reload Amazon Order Status when options change."""
+    await hass.config_entries.async_reload(entry.entry_id)
 
 
 def _make_purge_order_handler(hass: HomeAssistant):
@@ -101,20 +134,16 @@ def _make_rescan_handler(hass: HomeAssistant):
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Amazon Order Status from a config entry."""
-    # Create the coordinator
     coordinator = AmazonOrdersCoordinator(hass, entry)
-    await coordinator.async_config_entry_first_refresh()
+    entry.runtime_data = coordinator
 
-    # Ensure DOMAIN dict exists
     hass.data.setdefault(DOMAIN, {})
-
-    # Store coordinator under a fixed key for options_flow
-    hass.data[DOMAIN]["coordinator"] = coordinator
-
-    # Also store by entry_id for platform setup
     hass.data[DOMAIN][entry.entry_id] = coordinator
 
-    # Register purge_order service (idempotent if multiple entries)
+    entry.async_on_unload(entry.add_update_listener(_async_update_listener))
+
+    await coordinator.async_config_entry_first_refresh()
+
     if not hass.services.has_service(DOMAIN, SERVICE_PURGE_ORDER):
         hass.services.async_register(
             DOMAIN,
@@ -130,7 +159,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             schema=RESCAN_SCHEMA,
         )
 
-    # Forward entry setups (sensors)
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
     return True
@@ -138,14 +166,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
-    # Unload platforms
-    await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+    unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+    if not unload_ok:
+        return False
 
-    # Remove coordinator references
     if DOMAIN in hass.data:
-        if "coordinator" in hass.data[DOMAIN]:
-            hass.data[DOMAIN].pop("coordinator")
-        if entry.entry_id in hass.data[DOMAIN]:
-            hass.data[DOMAIN].pop(entry.entry_id)
+        hass.data[DOMAIN].pop(entry.entry_id, None)
+        if not hass.data[DOMAIN]:
+            hass.data.pop(DOMAIN)
+            if hass.services.has_service(DOMAIN, SERVICE_PURGE_ORDER):
+                hass.services.async_remove(DOMAIN, SERVICE_PURGE_ORDER)
+            if hass.services.has_service(DOMAIN, SERVICE_RESCAN):
+                hass.services.async_remove(DOMAIN, SERVICE_RESCAN)
 
     return True
