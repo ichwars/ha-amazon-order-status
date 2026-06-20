@@ -18,7 +18,7 @@ from homeassistant.helpers.storage import Store
 import html
 from bs4 import BeautifulSoup
 
-from .const import CONF_MARK_AS_READ, CONF_IMAP_FOLDER
+from .const import CONF_IMAP_FOLDER, CONF_INITIAL_SCAN_DAYS, CONF_MARK_AS_READ
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -158,6 +158,28 @@ def _append_history(existing: dict | None, event: dict) -> list[dict]:
     return history[-20:]
 
 
+def _new_scan_stats(folder: str, since: datetime, now: datetime) -> dict:
+    """Return a fresh scan diagnostics structure."""
+    return {
+        "started": now.isoformat(),
+        "since": since.isoformat(),
+        "imap_folder": folder,
+        "email_count": 0,
+        "fetched_count": 0,
+        "recognized_count": 0,
+        "updated_count": 0,
+        "matched_by_subject_count": 0,
+        "skipped_before_last_check": 0,
+        "skipped_no_date": 0,
+        "skipped_no_status": 0,
+        "skipped_no_order_id": 0,
+        "skipped_status_regression": 0,
+        "skipped_older_duplicate": 0,
+        "failed_fetch_count": 0,
+        "error": None,
+    }
+
+
 LANGUAGE_PROFILES = {
     "en": {
         "Ordered": (
@@ -275,11 +297,13 @@ class AmazonOrdersCoordinator(DataUpdateCoordinator):
         self._legacy_store = Store(hass, STORAGE_VERSION, STORAGE_KEY)
         self._orders: Dict[str, dict] = {}
         self.delivered_retention_days = entry.options.get("delivered_retention_days", 7)
+        self._initial_scan_days = entry.options.get(CONF_INITIAL_SCAN_DAYS, 14)
         self._mark_as_read = entry.options.get(CONF_MARK_AS_READ, False)
         # Get IMAP folder from options, default to "INBOX" if empty or not set
         folder = entry.options.get(CONF_IMAP_FOLDER, "")
         self._imap_folder = folder.strip() if folder and folder.strip() else "INBOX"
         self.last_check: datetime | None = None
+        self.last_scan_stats: dict = {}
 
         # Determine update interval from options or config entry, default 5 min
         interval_minutes = entry.options.get(
@@ -404,6 +428,16 @@ class AmazonOrdersCoordinator(DataUpdateCoordinator):
         self.hass.config_entries.async_update_entry(self.entry, options=new_options)
 
     @callback
+    def async_set_initial_scan_days(self, days: int):
+        """Update how many days are scanned when no last-check timestamp exists."""
+        self._initial_scan_days = max(1, min(int(days), 365))
+        _LOGGER.debug("Initial scan days updated to %d", self._initial_scan_days)
+
+        new_options = dict(self.entry.options)
+        new_options[CONF_INITIAL_SCAN_DAYS] = self._initial_scan_days
+        self.hass.config_entries.async_update_entry(self.entry, options=new_options)
+
+    @callback
     def async_set_imap_folder(self, folder: str):
         """Update the IMAP folder to search."""
         folder_clean = folder.strip() if folder and folder.strip() else "INBOX"
@@ -493,8 +527,11 @@ class AmazonOrdersCoordinator(DataUpdateCoordinator):
             since = last_check
             _LOGGER.debug("Checking emails since last run: %s", since)
         else:
-            since = now - timedelta(days=14)
-            _LOGGER.debug("First run: checking last 14 days")
+            since = now - timedelta(days=self._initial_scan_days)
+            _LOGGER.debug("First run: checking last %d days", self._initial_scan_days)
+
+        scan_stats = _new_scan_stats(self._imap_folder, since, now)
+        self.last_scan_stats = scan_stats
 
         since_utc = _to_utc(since)
         # IMAP SINCE is interpreted in the server's timezone (e.g. Gmail uses PST), so
@@ -506,10 +543,12 @@ class AmazonOrdersCoordinator(DataUpdateCoordinator):
 
         if typ != "OK":
             _LOGGER.error("IMAP search failed")
+            scan_stats["error"] = "imap_search_failed"
             mail.logout()
             return
 
         email_nums = data[0].split()
+        scan_stats["email_count"] = len(email_nums)
         _LOGGER.debug(
             "Found %d emails since %s (processing all; applying updates when email is newer than stored)",
             len(email_nums),
@@ -520,7 +559,9 @@ class AmazonOrdersCoordinator(DataUpdateCoordinator):
             typ, msg_data = mail.fetch(num, "(BODY.PEEK[] INTERNALDATE)")
             if typ != "OK" or not msg_data or not msg_data[0]:
                 _LOGGER.warning("Failed to fetch email %s", num)
+                scan_stats["failed_fetch_count"] += 1
                 continue
+            scan_stats["fetched_count"] += 1
 
             # Prefer INTERNALDATE (when mailbox received the message) over Date header
             raw_response = msg_data[0][0]
@@ -544,6 +585,7 @@ class AmazonOrdersCoordinator(DataUpdateCoordinator):
             received_utc = internaldate_utc if internaldate_utc is not None else msg_datetime
             if received_utc is None:
                 _LOGGER.debug("Email %s: no INTERNALDATE or Date header, skipping", num)
+                scan_stats["skipped_no_date"] += 1
                 continue
 
             # Ignore emails that arrived before our last check (avoids re-adding purged orders)
@@ -554,6 +596,7 @@ class AmazonOrdersCoordinator(DataUpdateCoordinator):
                     received_utc,
                     since_utc,
                 )
+                scan_stats["skipped_before_last_check"] += 1
                 continue
 
             subject = self._decode_header(msg.get("Subject", ""))
@@ -566,7 +609,9 @@ class AmazonOrdersCoordinator(DataUpdateCoordinator):
                     num,
                     subject[:80],
                 )
+                scan_stats["skipped_no_status"] += 1
                 continue
+            scan_stats["recognized_count"] += 1
 
             body_text = self._extract_text(msg)
             html_body = self._extract_html(msg)
@@ -582,6 +627,7 @@ class AmazonOrdersCoordinator(DataUpdateCoordinator):
                         ", ".join(order_ids),
                         subject,
                     )
+                    scan_stats["matched_by_subject_count"] += len(order_ids)
             if not order_ids:
                 _LOGGER.debug(
                     "No order numbers found in email (subject: %s). "
@@ -590,6 +636,7 @@ class AmazonOrdersCoordinator(DataUpdateCoordinator):
                     len(body_text),
                     len(html_body) if html_body else 0,
                 )
+                scan_stats["skipped_no_order_id"] += 1
                 continue
 
             tracking_url = self._extract_tracking_url(html_body) if html_body else None
@@ -609,6 +656,7 @@ class AmazonOrdersCoordinator(DataUpdateCoordinator):
                             existing.get("status"),
                             status,
                         )
+                        scan_stats["skipped_status_regression"] += 1
                         continue
                     try:
                         existing_updated = _to_utc(
@@ -623,6 +671,7 @@ class AmazonOrdersCoordinator(DataUpdateCoordinator):
                                 order_id,
                                 received_utc,
                             )
+                            scan_stats["skipped_older_duplicate"] += 1
                             continue
                     except (ValueError, TypeError):
                         pass
@@ -656,6 +705,7 @@ class AmazonOrdersCoordinator(DataUpdateCoordinator):
                     "history": _append_history(existing, event),
                 }
                 did_update = True
+                scan_stats["updated_count"] += 1
                 _LOGGER.debug(
                     "Order %s → %s (%s) [tracking: %s]",
                     order_id,

@@ -16,8 +16,10 @@ We obtain this information via email as Amazon does not publish any public API t
 * Preserve item titles separately from the raw email subject.
 * Track compact status history per order.
 * Configurable polling interval to check for new order updates.
+* Configurable initial scan window for first setup and rebuilds.
 * Optional automatic marking of processed emails as read.
 * Configurable retention for delivered orders.
+* Scan diagnostics on the last-updated sensor.
 * Service for manual rescans without deleting Home Assistant storage files.
 * Fully customizable options via Home Assistant's UI.
 
@@ -70,7 +72,7 @@ Place the amazon_order_status folder in your Home Assistant custom_components di
 
 * Enter your IMAP server details, username, and password.
 
-Configuration Options
+**Configuration Options**
 
 * *All options can be changed through the Integration Options dialog after adding the integration.*
 
@@ -78,10 +80,19 @@ Option - Description
 
 * ```delivered_retention_days```: 	How long Home Assistant should keep a record of delivered items. Default: 30 days.
 * ```update_interval```: 	How often Home Assistant should check your Amazon emails for order updates, in minutes. Default: 5 minutes.
+* ```initial_scan_days```: How many days of email should be scanned when the integration has no previous scan timestamp. Default: 14 days.
 * ```mark_as_read```: 	If enabled, emails containing Amazon delivery updates will be automatically marked as read after processing. Default: True.
 * ```imap_folder```: Optional - Specify a folder to search for emails rather than the default INBOX.  If left blank, defaults to searching INBOX.  If a folder is specified (Either "Folder Name" or "INBOX/Folder Name" depending on provider) email searches will be limited to that folder. 
 
-Upon initial installation, this integration will scan the previous 14 days worth of emails for Amazon order emails.  Depending on the volume of email in the inbox, this initial scan could take anywhere from a few seconds to a few minutes.  During this time, the integration dialog will display a spinning icon.  You can check the progress of the initial data load by looking at the console of your home assistant instance for debug log messages.  Once the initial data load is complete, the integration will keep track of its last-scanned date/time and perform only rapid scans of the messages recieved since the last check.
+Upon initial installation, this integration scans the previous ```initial_scan_days``` worth of emails for Amazon order emails. Depending on the volume of email in the inbox, this initial scan could take anywhere from a few seconds to a few minutes. Once the initial data load is complete, the integration keeps track of its last-scanned date/time and performs only rapid scans of the messages received since the last check.
+
+**Upgrade and Migration**
+
+Version ```1.4.6``` keeps existing tracked orders and can read the legacy global storage key automatically. After updating through HACS or manually replacing the integration files, restart Home Assistant.
+
+If you want to rebuild the tracked order list after upgrading, call ```amazon_order_status.rescan``` instead of deleting files from ```/config/.storage```. Use ```clear_existing: true``` for a clean rebuild from the selected lookback window.
+
+The project is licensed under the MIT License. See ```LICENSE``` and ```CHANGELOG.md``` for release details.
 
 **Notes**
 
@@ -101,7 +112,14 @@ Once configured, this integration creates 5 new sensors:
 * ```sensor.amazon_orders_shipped```
 * ```sensor.amazon_orders_last_updated```
 
-The ```sensor.amazon_orders_last_updated``` sensor contains a datestamp indicating the last email check.
+The ```sensor.amazon_orders_last_updated``` sensor contains a datestamp indicating the last email check. Its attributes also expose diagnostics for the most recent scan:
+
+* ```started``` and ```since```
+* ```imap_folder```
+* ```email_count```, ```fetched_count```, ```recognized_count```, and ```updated_count```
+* ```matched_by_subject_count```
+* skip counters such as ```skipped_no_order_id```, ```skipped_no_status```, and ```skipped_status_regression```
+* ```error``` if the scan failed before email processing
 
 The remaining sensors contain the following attributes :
 * ```order_id``` (Amazon Order ID)
@@ -122,20 +140,81 @@ German Amazon.de subjects such as these are supported:
 * ```In Zustellung: "Item name"```
 * ```Zugestellt: 1 Artikel | Bestellung # 123-4567890-1234567```
 
-...these can be parsed though markdown or other methods to display the Order dates, tracking links, etc. on the dashboard.    Here is an example markdown card to display order information from the ```sensor.amazon_orders_ordered``` sensor:
+**Dashboard Example**
 
+Each status card is conditional, so the dashboard shows nothing when there are no orders in that status.
 
+```yaml
+type: vertical-stack
+cards:
+  - type: conditional
+    conditions:
+      - entity: sensor.amazon_orders_ordered
+        state_not: "0"
+    card:
+      type: markdown
+      title: Amazon Orders - Ordered
+      content: >
+        {% for o in state_attr('sensor.amazon_orders_ordered', 'orders') or [] %}
+        **{{ o.item_title or o.subject or o.order_id }}**
 
-```
-Amazon Orders – Ordered
-{% set orders = state_attr('sensor.amazon_orders_ordered', 'orders') or [] %}
-{% for data in orders %}
-- **Item:** {{ data.item_title or data.subject }}
-  - Updated: {{ data.updated | as_timestamp | timestamp_custom('%b %d at %I:%M %p') }}
-  - [Track Package]({{ data.tracking_url }})
-{% else %}
-_No orders in this state._
-{% endfor %}
+        Updated: {{ o.updated | as_timestamp | timestamp_custom('%d.%m.%Y %H:%M') }}
+
+        Order ID: {{ o.order_id }}
+
+        {% if o.tracking_url %}[Open order]({{ o.tracking_url }}){% endif %}
+        {% endfor %}
+  - type: conditional
+    conditions:
+      - entity: sensor.amazon_orders_shipped
+        state_not: "0"
+    card:
+      type: markdown
+      title: Amazon Orders - Shipped
+      content: >
+        {% for o in state_attr('sensor.amazon_orders_shipped', 'orders') or [] %}
+        **{{ o.item_title or o.subject or o.order_id }}**
+
+        Updated: {{ o.updated | as_timestamp | timestamp_custom('%d.%m.%Y %H:%M') }}
+
+        Order ID: {{ o.order_id }}
+
+        {% if o.tracking_url %}[Track package]({{ o.tracking_url }}){% endif %}
+        {% endfor %}
+  - type: conditional
+    conditions:
+      - entity: sensor.amazon_orders_out_for_delivery
+        state_not: "0"
+    card:
+      type: markdown
+      title: Amazon Orders - Out for Delivery
+      content: >
+        {% for o in state_attr('sensor.amazon_orders_out_for_delivery', 'orders') or [] %}
+        **{{ o.item_title or o.subject or o.order_id }}**
+
+        Updated: {{ o.updated | as_timestamp | timestamp_custom('%d.%m.%Y %H:%M') }}
+
+        Order ID: {{ o.order_id }}
+
+        {% if o.tracking_url %}[Track package]({{ o.tracking_url }}){% endif %}
+        {% endfor %}
+  - type: conditional
+    conditions:
+      - entity: sensor.amazon_orders_delivered
+        state_not: "0"
+    card:
+      type: markdown
+      title: Amazon Orders - Delivered
+      content: >
+        {% for o in state_attr('sensor.amazon_orders_delivered', 'orders') or [] %}
+        **{{ o.item_title or o.subject or o.order_id }}**
+
+        Updated: {{ o.updated | as_timestamp | timestamp_custom('%d.%m.%Y %H:%M') }}
+
+        Order ID: {{ o.order_id }}
+
+        {% if o.tracking_url %}[Open order]({{ o.tracking_url }}){% endif %}
+        {% endfor %}
 ```
 
 **Services**
@@ -213,80 +292,4 @@ You can then leverage the helper and script in a dashboard to purge orders by or
         icon_height: 20px
 ```
 
-Here is a complete Mushroom Card template stack, including more attractive widgets and UI for pasting order IDs and purging orders as needed:
-```
-type: vertical-stack
-cards:
-  - type: conditional
-    conditions:
-      - entity: sensor.amazon_orders_ordered
-        state_not: "0"
-    card:
-      type: markdown
-      title: 🟡 Ordered
-      content: >
-        {% for o in state_attr('sensor.amazon_orders_ordered', 'orders') or []
-        %} • **{{ o.subject }}**  Updated: {{ o.updated | as_timestamp |
-        timestamp_custom('%b %d at %I:%M %p') }} [Open]({{ o.tracking_url }})
-        Order ID: {{ o.order_id }} {{ '\n' }}{% else %} _None_ {% endfor %}
-  - type: conditional
-    conditions:
-      - entity: sensor.amazon_orders_shipped
-        state_not: "0"
-    card:
-      type: markdown
-      title: 🚚 Shipped
-      content: >
-        {% for o in state_attr('sensor.amazon_orders_shipped', 'orders') or []
-        %} • **{{ o.subject }}**   Updated: {{o.updated | as_timestamp |
-        timestamp_custom('%b %d at %I:%M %p') }} [Track]({{ o.tracking_url }})
-        Order ID: {{ o.order_id }} {{ '\n' }} {% else %} _None_ {% endfor %}
-  - type: conditional
-    conditions:
-      - entity: sensor.amazon_orders_out_for_delivery
-        state_not: "0"
-    card:
-      type: markdown
-      title: 🚚 Out for Delivery
-      content: >
-        {% for o in state_attr('sensor.amazon_orders_out_for_delivery',
-        'orders') or [] %} • **{{ o.subject }}**   Updated: {{o.updated |
-        as_timestamp | timestamp_custom('%b %d at %I:%M %p') }} [Track]({{
-        o.tracking_url }}) Order ID: {{ o.order_id }} {{ '\n' }} {% else %}
-        _None_ {% endfor %}
-  - type: conditional
-    conditions:
-      - entity: sensor.amazon_orders_delivered
-        state_not: "0"
-    card:
-      type: markdown
-      title: 📬 Delivered
-      content: >
-        {% for o in state_attr('sensor.amazon_orders_delivered', 'orders') or []
-        %} • **{{ o.subject }}** Updated: {{o.updated | as_timestamp |
-        timestamp_custom('%b %d at %I:%M %p') }} [Open]({{ o.tracking_url }})
-        Order ID: {{ o.order_id }} {{ '\n' }} {% else %} _None_ {% endfor %}
-  - type: horizontal-stack
-    cards:
-      - type: entities
-        entities:
-          - entity: input_text.amazon_order_purge_id
-            name: Order ID to purge
-            secondary_info: none
-      - show_name: true
-        show_icon: true
-        type: button
-        name: Purge order
-        icon: mdi:delete
-        tap_action:
-          action: call-service
-          service: script.turn_on
-          target:
-            entity_id: script.purge_amazon_order
-        hold_action:
-          action: none
-        show_state: false
-        icon_height: 20px
-
-
-```
+The purge helper/button stack can be placed below the conditional order stack from the dashboard example above.

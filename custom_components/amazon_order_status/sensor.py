@@ -97,3 +97,8 @@ class AmazonOrdersLastUpdatedSensor(CoordinatorEntity, Entity):
         if not getattr(self.coordinator, "last_check", None):
             return None
         return self.coordinator.last_check.isoformat()
+
+    @property
+    def extra_state_attributes(self):
+        """Return diagnostics for the most recent scan."""
+        return dict(getattr(self.coordinator, "last_scan_stats", {}) or {})

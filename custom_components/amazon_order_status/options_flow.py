@@ -4,7 +4,7 @@ from homeassistant import config_entries
 import voluptuous as vol
 from homeassistant.helpers import config_validation as cv
 
-from .const import DOMAIN, CONF_IMAP_FOLDER
+from .const import CONF_IMAP_FOLDER, CONF_INITIAL_SCAN_DAYS, DOMAIN
 
 
 class AmazonOrderStatusOptionsFlow(config_entries.OptionsFlow):
@@ -40,6 +40,10 @@ class AmazonOrderStatusOptionsFlow(config_entries.OptionsFlow):
                     coordinator.async_set_mark_as_read(
                         user_input["mark_as_read"]
                     )
+                if CONF_INITIAL_SCAN_DAYS in user_input:
+                    coordinator.async_set_initial_scan_days(
+                        user_input[CONF_INITIAL_SCAN_DAYS]
+                    )
                 if CONF_IMAP_FOLDER in user_input:
                     coordinator.async_set_imap_folder(
                         user_input[CONF_IMAP_FOLDER]
@@ -60,6 +64,10 @@ class AmazonOrderStatusOptionsFlow(config_entries.OptionsFlow):
                 vol.Required(
                     "update_interval",
                     default=options.get("update_interval", 5),
+                ): cv.positive_int,
+                vol.Required(
+                    CONF_INITIAL_SCAN_DAYS,
+                    default=options.get(CONF_INITIAL_SCAN_DAYS, 14),
                 ): cv.positive_int,
                 vol.Required(
                     "mark_as_read",

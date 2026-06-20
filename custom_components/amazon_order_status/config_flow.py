@@ -5,7 +5,7 @@ import voluptuous as vol
 import imaplib
 import socket
 
-from .const import DOMAIN, CONF_IMAP_FOLDER
+from .const import CONF_IMAP_FOLDER, CONF_INITIAL_SCAN_DAYS, DOMAIN
 from .options_flow import AmazonOrderStatusOptionsFlow
 
 
@@ -68,6 +68,10 @@ class AmazonOrdersConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     options={
                         "update_interval": user_input.get("poll_interval", 5),
                         "delivered_retention_days": 30,
+                        CONF_INITIAL_SCAN_DAYS: user_input.get(
+                            CONF_INITIAL_SCAN_DAYS,
+                            14,
+                        ),
                         "mark_as_read": user_input.get("mark_as_read", True),
                         CONF_IMAP_FOLDER: user_input.get(CONF_IMAP_FOLDER, ""),
                     },
@@ -84,6 +88,7 @@ class AmazonOrdersConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 vol.Required("password"): str,
                 vol.Optional("imap_port", default=993): int,
                 vol.Optional("poll_interval", default=5): int,
+                vol.Optional(CONF_INITIAL_SCAN_DAYS, default=14): int,
                 vol.Optional("mark_as_read", default=True): bool,
                 vol.Optional(CONF_IMAP_FOLDER, default=""): str,
             }

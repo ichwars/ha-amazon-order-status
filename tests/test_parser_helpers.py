@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib.util
 import sys
 import types
+from datetime import datetime, timezone
 from pathlib import Path
 import unittest
 
@@ -115,6 +116,42 @@ class ParserHelpersTest(unittest.TestCase):
 
         self.assertEqual(1, len(history))
         self.assertEqual("Ordered", history[0]["status"])
+
+    def test_status_ranking_prevents_regressions(self):
+        self.assertLess(
+            coordinator.STATUS_RANKS["Ordered"],
+            coordinator.STATUS_RANKS["Shipped"],
+        )
+        self.assertLess(
+            coordinator.STATUS_RANKS["Shipped"],
+            coordinator.STATUS_RANKS["Out for delivery"],
+        )
+        self.assertLess(
+            coordinator.STATUS_RANKS["Out for delivery"],
+            coordinator.STATUS_RANKS["Delivered"],
+        )
+
+    def test_scan_stats_defaults_are_stable(self):
+        since = datetime(2026, 6, 19, tzinfo=timezone.utc)
+        now = datetime(2026, 6, 20, tzinfo=timezone.utc)
+
+        stats = coordinator._new_scan_stats("INBOX", since, now)
+
+        self.assertEqual("INBOX", stats["imap_folder"])
+        self.assertEqual(since.isoformat(), stats["since"])
+        self.assertEqual(now.isoformat(), stats["started"])
+        self.assertIsNone(stats["error"])
+        for key in (
+            "email_count",
+            "fetched_count",
+            "recognized_count",
+            "updated_count",
+            "matched_by_subject_count",
+            "skipped_no_order_id",
+            "skipped_status_regression",
+            "failed_fetch_count",
+        ):
+            self.assertEqual(0, stats[key])
 
 
 if __name__ == "__main__":
