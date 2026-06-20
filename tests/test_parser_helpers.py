@@ -189,6 +189,38 @@ class ParserHelpersTest(unittest.TestCase):
             coordinator.STATUS_RANKS["Delivered"],
         )
 
+    def test_existing_order_can_be_enriched_from_older_email(self):
+        existing = {
+            "status": "Delivered",
+            "item_title": None,
+            "updated": "2026-06-19T14:15:55+00:00",
+            "tracking_url": None,
+        }
+        body_details = {
+            "item_image_url": "https://m.media-amazon.com/images/I/example.jpg",
+            "delivery_estimate": "24. Juni - 25. Juni",
+        }
+
+        changed = coordinator._enrich_missing_order_details(
+            existing,
+            body_details,
+            item_title="Example Product",
+            tracking_url="https://www.amazon.de/gp/r.html?x=1",
+        )
+
+        self.assertTrue(changed)
+        self.assertEqual("Delivered", existing["status"])
+        self.assertEqual("Example Product", existing["item_title"])
+        self.assertEqual(
+            "https://m.media-amazon.com/images/I/example.jpg",
+            existing["item_image_url"],
+        )
+        self.assertEqual("24. Juni - 25. Juni", existing["delivery_estimate"])
+        self.assertEqual(
+            "https://www.amazon.de/gp/r.html?x=1",
+            existing["tracking_url"],
+        )
+
     def test_body_details_extract_delivery_window_title_count_and_image(self):
         details = coordinator._parse_body_details(
             "Bestellt: Fitorb Smart Ring Pro - Das...",

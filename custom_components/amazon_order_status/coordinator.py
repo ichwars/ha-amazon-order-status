@@ -538,6 +538,43 @@ def _append_history(existing: dict | None, event: dict) -> list[dict]:
     return history[-20:]
 
 
+def _has_value(value: Any) -> bool:
+    """Return True when a parsed order detail contains useful data."""
+    return value not in (None, "", [], {})
+
+
+def _enrich_missing_order_details(
+    order: dict[str, Any],
+    body_details: dict[str, Any],
+    *,
+    item_title: str | None = None,
+    tracking_url: str | None = None,
+    include_parser_debug: bool = False,
+) -> bool:
+    """Add missing body-derived details without changing order status."""
+    changed = False
+
+    if _has_value(item_title) and not _has_value(order.get("item_title")):
+        order["item_title"] = item_title
+        changed = True
+
+    if _has_value(tracking_url) and not _has_value(order.get("tracking_url")):
+        order["tracking_url"] = tracking_url
+        changed = True
+
+    for field in ORDER_DETAIL_FIELDS:
+        value = body_details.get(field)
+        if _has_value(value) and not _has_value(order.get(field)):
+            order[field] = value
+            changed = True
+
+    if include_parser_debug and "parser_debug" in body_details:
+        order["parser_debug"] = body_details["parser_debug"]
+        changed = True
+
+    return changed
+
+
 def _new_scan_stats(folder: str, since: datetime, now: datetime) -> dict:
     """Return a fresh scan diagnostics structure."""
     return {
@@ -548,6 +585,7 @@ def _new_scan_stats(folder: str, since: datetime, now: datetime) -> dict:
         "fetched_count": 0,
         "recognized_count": 0,
         "updated_count": 0,
+        "enriched_count": 0,
         "matched_by_subject_count": 0,
         "skipped_before_last_check": 0,
         "skipped_no_date": 0,
@@ -1066,10 +1104,27 @@ class AmazonOrdersCoordinator(DataUpdateCoordinator):
                         continue
 
                     effective_status = status or existing.get("status")
+                    item_title = body_details.get("item_title") or _extract_item_title(
+                        subject
+                    )
                     if existing:
                         existing_status_rank = STATUS_RANKS.get(existing.get("status"), -1)
                         new_status_rank = STATUS_RANKS.get(effective_status, -1)
                         if status is not None and new_status_rank < existing_status_rank:
+                            if _enrich_missing_order_details(
+                                existing,
+                                body_details,
+                                item_title=item_title,
+                                tracking_url=tracking_url,
+                                include_parser_debug=self.expose_parser_debug,
+                            ):
+                                scan_stats["enriched_count"] += 1
+                                scan_stats["updated_count"] += 1
+                                _LOGGER.debug(
+                                    "Order %s enriched from older %s email without status regression",
+                                    order_id,
+                                    status,
+                                )
                             _LOGGER.debug(
                                 "Order %s: skipping status regression %s -> %s",
                                 order_id,
@@ -1086,6 +1141,19 @@ class AmazonOrdersCoordinator(DataUpdateCoordinator):
                                 new_status_rank == existing_status_rank
                                     and received_utc < existing_updated
                                 ):
+                                if _enrich_missing_order_details(
+                                    existing,
+                                    body_details,
+                                    item_title=item_title,
+                                    tracking_url=tracking_url,
+                                    include_parser_debug=self.expose_parser_debug,
+                                ):
+                                    scan_stats["enriched_count"] += 1
+                                    scan_stats["updated_count"] += 1
+                                    _LOGGER.debug(
+                                        "Order %s enriched from older duplicate email",
+                                        order_id,
+                                    )
                                 _LOGGER.debug(
                                     "Order %s: skipping older duplicate email",
                                     order_id,
@@ -1097,9 +1165,6 @@ class AmazonOrdersCoordinator(DataUpdateCoordinator):
 
                     stored_subject = subject
                     stored_tracking_url = tracking_url
-                    item_title = body_details.get("item_title") or _extract_item_title(
-                        subject
-                    )
                     if existing:
                         existing_subject = existing.get("subject", "")
                         existing_item_title = existing.get("item_title") or _extract_item_title(

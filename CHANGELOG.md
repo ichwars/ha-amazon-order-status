@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- Options flow is grouped into Scan, Processing, and Visible sensor attributes sections with full English and German labels/descriptions.
+- Manual rescans can enrich existing orders with missing body-derived details from older emails, such as item images, without moving the order status backwards.
+
+### Fixed
+
+- Dashboard examples now use safe `dict.get(...)` access for optional attributes.
+
 ## 1.4.8
 
 ### Added

@@ -105,6 +105,8 @@ Version ```1.4.7``` changed entity unique IDs to include the config entry ID so 
 
 If you want to rebuild the tracked order list after upgrading, call ```amazon_order_status.rescan``` instead of deleting files from ```/config/.storage```. Use ```clear_existing: true``` for a clean rebuild from the selected lookback window.
 
+If you enabled body-derived attributes such as ```item_image_url``` after orders were already tracked, call ```amazon_order_status.rescan``` once. A rescan can now enrich existing orders with missing details from older order emails without moving the order status backwards.
+
 The project is licensed under the MIT License. See ```LICENSE``` and ```CHANGELOG.md``` for release details.
 
 **Notes**
@@ -130,7 +132,7 @@ The ```sensor.amazon_orders_last_updated``` sensor contains a datestamp indicati
 
 * ```started``` and ```since```
 * ```imap_folder```
-* ```email_count```, ```fetched_count```, ```recognized_count```, and ```updated_count```
+* ```email_count```, ```fetched_count```, ```recognized_count```, ```updated_count```, and ```enriched_count```
 * ```matched_by_subject_count```
 * skip counters such as ```skipped_no_order_id```, ```skipped_no_status```, and ```skipped_status_regression```
 * ```error``` if the scan failed before email processing
@@ -181,13 +183,19 @@ cards:
       title: Amazon Orders - Ordered
       content: >
         {% for o in state_attr('sensor.amazon_orders_ordered', 'orders') or [] %}
-        **{{ o.item_title or o.subject or o.order_id }}**
+        {% set title = o.get('item_title') or o.get('subject') or o.get('order_id') or 'Amazon order' %}
+        {% set img = o.get('item_image_url') %}
+        {% if img %}![Item]({{ img }}){% endif %}
 
-        Updated: {{ o.updated | as_timestamp | timestamp_custom('%d.%m.%Y %H:%M') }}
+        **{{ title }}**
 
-        Order ID: {{ o.order_id }}
+        {% if o.get('delivery_estimate') %}Delivery: {{ o.get('delivery_estimate') }}{% endif %}
 
-        {% if o.tracking_url %}[Open order]({{ o.tracking_url }}){% endif %}
+        {% if o.get('updated') %}Updated: {{ o.get('updated') | as_timestamp | timestamp_custom('%d.%m.%Y %H:%M') }}{% endif %}
+
+        {% if o.get('order_id') %}Order ID: {{ o.get('order_id') }}{% endif %}
+
+        {% if o.get('tracking_url') %}[Open order]({{ o.get('tracking_url') }}){% endif %}
         {% endfor %}
   - type: conditional
     conditions:
@@ -198,13 +206,21 @@ cards:
       title: Amazon Orders - Shipped
       content: >
         {% for o in state_attr('sensor.amazon_orders_shipped', 'orders') or [] %}
-        **{{ o.item_title or o.subject or o.order_id }}**
+        {% set title = o.get('item_title') or o.get('subject') or o.get('order_id') or 'Amazon order' %}
+        {% set img = o.get('item_image_url') %}
+        {% if img %}![Item]({{ img }}){% endif %}
 
-        Updated: {{ o.updated | as_timestamp | timestamp_custom('%d.%m.%Y %H:%M') }}
+        **{{ title }}**
 
-        Order ID: {{ o.order_id }}
+        {% if o.get('delivery_estimate') %}Delivery: {{ o.get('delivery_estimate') }}{% endif %}
 
-        {% if o.tracking_url %}[Track package]({{ o.tracking_url }}){% endif %}
+        {% if o.get('delivery_window') %}Window: {{ o.get('delivery_window') }}{% endif %}
+
+        {% if o.get('updated') %}Updated: {{ o.get('updated') | as_timestamp | timestamp_custom('%d.%m.%Y %H:%M') }}{% endif %}
+
+        {% if o.get('order_id') %}Order ID: {{ o.get('order_id') }}{% endif %}
+
+        {% if o.get('tracking_url') %}[Track package]({{ o.get('tracking_url') }}){% endif %}
         {% endfor %}
   - type: conditional
     conditions:
@@ -215,13 +231,44 @@ cards:
       title: Amazon Orders - Out for Delivery
       content: >
         {% for o in state_attr('sensor.amazon_orders_out_for_delivery', 'orders') or [] %}
-        **{{ o.item_title or o.subject or o.order_id }}**
+        {% set title = o.get('item_title') or o.get('subject') or o.get('order_id') or 'Amazon order' %}
+        {% set img = o.get('item_image_url') %}
+        {% if img %}![Item]({{ img }}){% endif %}
 
-        Updated: {{ o.updated | as_timestamp | timestamp_custom('%d.%m.%Y %H:%M') }}
+        **{{ title }}**
 
-        Order ID: {{ o.order_id }}
+        {% if o.get('delivery_estimate') %}Delivery: {{ o.get('delivery_estimate') }}{% endif %}
 
-        {% if o.tracking_url %}[Track package]({{ o.tracking_url }}){% endif %}
+        {% if o.get('delivery_window') %}Window: {{ o.get('delivery_window') }}{% endif %}
+
+        {% if o.get('carrier') %}Carrier: {{ o.get('carrier') }}{% endif %}
+
+        {% if o.get('updated') %}Updated: {{ o.get('updated') | as_timestamp | timestamp_custom('%d.%m.%Y %H:%M') }}{% endif %}
+
+        {% if o.get('tracking_url') %}[Track package]({{ o.get('tracking_url') }}){% endif %}
+        {% endfor %}
+  - type: conditional
+    conditions:
+      - entity: sensor.amazon_orders_delivery_attempted
+        state_not: "0"
+    card:
+      type: markdown
+      title: Amazon Orders - Delivery Attempted
+      content: >
+        {% for o in state_attr('sensor.amazon_orders_delivery_attempted', 'orders') or [] %}
+        {% set title = o.get('item_title') or o.get('subject') or o.get('order_id') or 'Amazon order' %}
+        {% set img = o.get('item_image_url') %}
+        {% if img %}![Item]({{ img }}){% endif %}
+
+        **{{ title }}**
+
+        {% if o.get('delivered_at') %}Attempted: {{ o.get('delivered_at') }}{% endif %}
+
+        {% if o.get('carrier') %}Carrier: {{ o.get('carrier') }}{% endif %}
+
+        {% if o.get('updated') %}Updated: {{ o.get('updated') | as_timestamp | timestamp_custom('%d.%m.%Y %H:%M') }}{% endif %}
+
+        {% if o.get('tracking_url') %}[Track package]({{ o.get('tracking_url') }}){% endif %}
         {% endfor %}
   - type: conditional
     conditions:
@@ -232,13 +279,19 @@ cards:
       title: Amazon Orders - Delivered
       content: >
         {% for o in state_attr('sensor.amazon_orders_delivered', 'orders') or [] %}
-        **{{ o.item_title or o.subject or o.order_id }}**
+        {% set title = o.get('item_title') or o.get('subject') or o.get('order_id') or 'Amazon order' %}
+        {% set img = o.get('item_image_url') %}
+        {% if img %}![Item]({{ img }}){% endif %}
 
-        Updated: {{ o.updated | as_timestamp | timestamp_custom('%d.%m.%Y %H:%M') }}
+        **{{ title }}**
 
-        Order ID: {{ o.order_id }}
+        {% if o.get('delivered_at') %}Delivered: {{ o.get('delivered_at') }}{% endif %}
 
-        {% if o.tracking_url %}[Open order]({{ o.tracking_url }}){% endif %}
+        {% if o.get('item_count') %}Items: {{ o.get('item_count') }}{% endif %}
+
+        {% if o.get('updated') %}Updated: {{ o.get('updated') | as_timestamp | timestamp_custom('%d.%m.%Y %H:%M') }}{% endif %}
+
+        {% if o.get('tracking_url') %}[Open order]({{ o.get('tracking_url') }}){% endif %}
         {% endfor %}
 ```
 
@@ -268,6 +321,8 @@ data:
 ```
 
 Use ```clear_existing: true``` when you want to rebuild the order list from the selected email lookback window. Use ```clear_existing: false``` to keep existing orders and only merge any status emails found in the lookback window.
+
+Use ```clear_existing: false``` after enabling optional attributes such as item images when you only want to enrich existing tracked orders from recent emails.
 
 Occasionally Amazon ships packages through 3d party couriers and a "Delivered" email is never sent (or drastically delayed).  To account for this, you can manually delete orders from the database.  You can pass the order id to ```amazon_order_status.purge_order``` through dev tools, although it's easier to create a helper and script, and pass values to the script via a button card.
 

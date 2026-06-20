@@ -7,32 +7,126 @@
     "step": {
       "user": {
         "title": "Amazon Orders",
-        "description": "Configure IMAP access for Amazon order emails. initial_scan_days controls how far back the first scan should look when no previous scan timestamp exists. require_amazon_sender ignores matching subjects unless sender headers use an Amazon domain. imap_folder is optional - leave blank for the root inbox, or provide a folder name to search a specific folder. Note that some email providers require 'INBOX/Folder name', others will accept simply 'Folder name'."
+        "description": "Configure IMAP access for Amazon order emails. Privacy-sensitive sensor attributes can be limited here and changed later in options.",
+        "data": {
+          "email": "Email address",
+          "imap_server": "IMAP server",
+          "username": "Username",
+          "password": "Password",
+          "imap_port": "IMAP port",
+          "imap_folder": "IMAP folder",
+          "poll_interval": "Check interval",
+          "initial_scan_days": "Initial scan window",
+          "mark_as_read": "Mark processed emails as read",
+          "require_amazon_sender": "Require Amazon sender",
+          "expose_order_id": "Expose order ID",
+          "expose_item_title": "Expose item title",
+          "expose_tracking_url": "Expose order/tracking link",
+          "expose_delivery_details": "Expose delivery details",
+          "expose_carrier": "Expose carrier",
+          "expose_item_image": "Expose item image",
+          "expose_parser_debug": "Expose parser diagnostics"
+        },
+        "data_description": {
+          "email": "Email address of the mailbox that receives Amazon order emails.",
+          "imap_server": "Hostname of your IMAP server, for example imap.example.com.",
+          "username": "Username for IMAP login.",
+          "password": "Password or app password for IMAP login.",
+          "imap_port": "IMAP SSL port. The default is 993.",
+          "imap_folder": "Leave blank for INBOX or enter the exact folder name, for example INBOX/Amazon.",
+          "poll_interval": "Minutes between mailbox checks.",
+          "initial_scan_days": "Number of days to scan back during the first scan.",
+          "mark_as_read": "Mark recognized Amazon status emails as read after processing.",
+          "require_amazon_sender": "Ignore matching subjects unless sender headers use an Amazon domain.",
+          "expose_order_id": "Expose Amazon order IDs in sensor attributes.",
+          "expose_item_title": "Expose parsed item titles in sensor attributes.",
+          "expose_tracking_url": "Expose validated HTTPS links to Amazon order or tracking pages.",
+          "expose_delivery_details": "Expose delivery estimate, delivery window, delivered-at text, and item count from email content.",
+          "expose_carrier": "Expose the detected shipping carrier when found in the email content.",
+          "expose_item_image": "Expose a validated Amazon product image URL from the email content.",
+          "expose_parser_debug": "Expose sanitized parser diagnostics. Raw text, addresses, order IDs, and full links are not included."
+        }
       },
       "reconfigure": {
         "title": "Reconfigure Amazon Orders",
-        "description": "Update IMAP connection settings for this Amazon Order Status entry."
+        "description": "Update IMAP connection settings for this Amazon Order Status entry.",
+        "data": {
+          "email": "Email address",
+          "imap_server": "IMAP server",
+          "username": "Username",
+          "password": "Password",
+          "imap_port": "IMAP port",
+          "imap_folder": "IMAP folder"
+        },
+        "data_description": {
+          "email": "Email address of the mailbox that receives Amazon order emails.",
+          "imap_server": "Hostname of your IMAP server.",
+          "username": "Username for IMAP login.",
+          "password": "Password or app password for IMAP login.",
+          "imap_port": "IMAP SSL port. The default is 993.",
+          "imap_folder": "The folder is stored through the integration options."
+        }
       }
     }
   },
   "options": {
     "step": {
-        "init": {
-          "title": "Amazon Order Options",
-          "description": "Configure how Home Assistant tracks and processes Amazon order emails. delivered_retention_days controls how many days delivered orders are kept. update_interval controls how often HA checks for delivery updates. initial_scan_days controls how far back a first scan should look. require_amazon_sender filters non-Amazon senders. expose_* options control which order details are exposed as sensor attributes. imap_folder is optional and defaults to INBOX.",
-          "data": {
-            "expose_delivery_details": "Expose delivery details",
-            "expose_carrier": "Expose carrier",
-            "expose_item_image": "Expose item image",
-            "expose_parser_debug": "Expose parser debug"
+      "init": {
+        "title": "Amazon Order Options",
+        "description": "Adjust scanning, processing, and visible sensor attributes.",
+        "sections": {
+          "scan": {
+            "name": "Scan and retention",
+            "description": "Controls how often and how far back the mailbox is scanned.",
+            "data": {
+              "delivered_retention_days": "Keep delivered orders",
+              "update_interval": "Check interval",
+              "initial_scan_days": "Initial scan window",
+              "imap_folder": "IMAP folder"
+            },
+            "data_description": {
+              "delivered_retention_days": "Number of days delivered orders remain tracked in Home Assistant.",
+              "update_interval": "Minutes between automatic mailbox checks.",
+              "initial_scan_days": "Number of days to scan back during the first scan or after empty storage.",
+              "imap_folder": "Leave blank for INBOX or enter the exact folder name, for example INBOX/Amazon."
+            }
           },
-          "data_description": {
-            "expose_delivery_details": "Expose body-derived delivery estimate, delivery window, delivered-at text, and item count.",
-            "expose_carrier": "Expose the detected shipping carrier when found in the email body.",
-            "expose_item_image": "Expose a trusted Amazon product image URL parsed from the email body.",
-            "expose_parser_debug": "Expose sanitized parser diagnostics. Raw email text, addresses, order IDs, and full links are not included."
+          "processing": {
+            "name": "Processing",
+            "description": "Controls which emails are processed and whether the mailbox is modified.",
+            "data": {
+              "mark_as_read": "Mark processed emails as read",
+              "require_amazon_sender": "Require Amazon sender"
+            },
+            "data_description": {
+              "mark_as_read": "Mark recognized Amazon status emails as read after processing.",
+              "require_amazon_sender": "Ignore matching subjects unless sender headers use an Amazon domain."
+            }
+          },
+          "attributes": {
+            "name": "Visible sensor attributes",
+            "description": "These options control which potentially sensitive order details are available to dashboards.",
+            "data": {
+              "expose_order_id": "Expose order ID",
+              "expose_item_title": "Expose item title",
+              "expose_tracking_url": "Expose order/tracking link",
+              "expose_delivery_details": "Expose delivery details",
+              "expose_carrier": "Expose carrier",
+              "expose_item_image": "Expose item image",
+              "expose_parser_debug": "Expose parser diagnostics"
+            },
+            "data_description": {
+              "expose_order_id": "Expose Amazon order IDs in sensor attributes.",
+              "expose_item_title": "Expose parsed item titles in sensor attributes.",
+              "expose_tracking_url": "Expose validated HTTPS links to Amazon order or tracking pages.",
+              "expose_delivery_details": "Expose delivery estimate, delivery window, delivered-at text, and item count from email content.",
+              "expose_carrier": "Expose the detected shipping carrier when found in the email content.",
+              "expose_item_image": "Expose a validated Amazon product image URL from the email content.",
+              "expose_parser_debug": "Expose sanitized parser diagnostics. Raw text, addresses, order IDs, and full links are not included."
+            }
           }
         }
+      }
     }
   },
   "services": {
@@ -42,7 +136,7 @@
       "fields": {
         "order_id": {
           "name": "Order ID",
-          "description": "The Amazon order number to remove (e.g. 123-4567890-1234567). You can copy this from the sensor's order list."
+          "description": "The Amazon order number to remove, for example 123-4567890-1234567."
         },
         "config_entry_id": {
           "name": "Config entry ID",

@@ -7,11 +7,65 @@
     "step": {
       "user": {
         "title": "Amazon-Bestellungen",
-        "description": "Richte den IMAP-Zugriff für Amazon-Bestellmails ein. initial_scan_days steuert, wie weit der erste Scan zurückschaut, wenn noch kein Scan-Zeitpunkt gespeichert ist. require_amazon_sender ignoriert passende Betreffzeilen, wenn die Absender-Header nicht zu einer Amazon-Domain gehören. imap_folder ist optional - leer lassen für INBOX oder einen Ordnernamen eintragen."
+        "description": "Richte den IMAP-Zugriff für Amazon-Bestellmails ein. Datenschutzrelevante Sensorattribute kannst du hier direkt begrenzen und später in den Optionen ändern.",
+        "data": {
+          "email": "E-Mail-Adresse",
+          "imap_server": "IMAP-Server",
+          "username": "Benutzername",
+          "password": "Passwort",
+          "imap_port": "IMAP-Port",
+          "imap_folder": "IMAP-Ordner",
+          "poll_interval": "Prüfintervall",
+          "initial_scan_days": "Erster Scan-Zeitraum",
+          "mark_as_read": "Verarbeitete Mails als gelesen markieren",
+          "require_amazon_sender": "Nur Amazon-Absender akzeptieren",
+          "expose_order_id": "Bestellnummer anzeigen",
+          "expose_item_title": "Artikeltitel anzeigen",
+          "expose_tracking_url": "Bestell-/Tracking-Link anzeigen",
+          "expose_delivery_details": "Lieferdetails anzeigen",
+          "expose_carrier": "Versanddienstleister anzeigen",
+          "expose_item_image": "Artikelbild anzeigen",
+          "expose_parser_debug": "Parser-Diagnose anzeigen"
+        },
+        "data_description": {
+          "email": "E-Mail-Adresse des Postfachs, in dem die Amazon-Mails liegen.",
+          "imap_server": "Host-Name deines IMAP-Servers, z. B. imap.example.com.",
+          "username": "Benutzername für die IMAP-Anmeldung.",
+          "password": "Passwort oder App-Passwort für die IMAP-Anmeldung.",
+          "imap_port": "IMAP-SSL-Port. Standard ist 993.",
+          "imap_folder": "Leer lassen für INBOX oder den genauen Ordnernamen eintragen, z. B. INBOX/Amazon.",
+          "poll_interval": "Minuten zwischen zwei Prüfungen des Postfachs.",
+          "initial_scan_days": "Anzahl Tage, die beim ersten Scan rückwirkend durchsucht werden.",
+          "mark_as_read": "Markiert erkannte Amazon-Statusmails nach der Verarbeitung als gelesen.",
+          "require_amazon_sender": "Ignoriert passende Betreffzeilen, wenn die Absender-Header nicht zu einer Amazon-Domain gehören.",
+          "expose_order_id": "Zeigt Bestellnummern in den Sensorattributen an.",
+          "expose_item_title": "Zeigt erkannte Artikeltitel in den Sensorattributen an.",
+          "expose_tracking_url": "Zeigt geprüfte HTTPS-Links zu Amazon-Bestellungen oder Trackingseiten an.",
+          "expose_delivery_details": "Zeigt Lieferprognose, Lieferfenster, Zustellzeitpunkt und Artikelanzahl aus dem Mail-Inhalt an.",
+          "expose_carrier": "Zeigt den erkannten Versanddienstleister an, wenn er im Mail-Inhalt gefunden wird.",
+          "expose_item_image": "Zeigt eine geprüfte Amazon-Produktbild-URL aus dem Mail-Inhalt an.",
+          "expose_parser_debug": "Zeigt bereinigte Parser-Diagnosen an. Rohtext, Adressen, Bestellnummern und vollständige Links werden nicht ausgegeben."
+        }
       },
       "reconfigure": {
         "title": "Amazon-Bestellungen neu konfigurieren",
-        "description": "Aktualisiere die IMAP-Verbindungseinstellungen für diesen Amazon-Order-Status-Eintrag."
+        "description": "Aktualisiere die IMAP-Verbindungseinstellungen für diesen Amazon-Order-Status-Eintrag.",
+        "data": {
+          "email": "E-Mail-Adresse",
+          "imap_server": "IMAP-Server",
+          "username": "Benutzername",
+          "password": "Passwort",
+          "imap_port": "IMAP-Port",
+          "imap_folder": "IMAP-Ordner"
+        },
+        "data_description": {
+          "email": "E-Mail-Adresse des Postfachs, in dem die Amazon-Mails liegen.",
+          "imap_server": "Host-Name deines IMAP-Servers.",
+          "username": "Benutzername für die IMAP-Anmeldung.",
+          "password": "Passwort oder App-Passwort für die IMAP-Anmeldung.",
+          "imap_port": "IMAP-SSL-Port. Standard ist 993.",
+          "imap_folder": "Der Ordner wird über die Integration-Optionen gespeichert."
+        }
       }
     }
   },
@@ -19,18 +73,58 @@
     "step": {
       "init": {
         "title": "Amazon-Order-Optionen",
-        "description": "Konfiguriere, wie Home Assistant Amazon-Bestellmails verarbeitet. delivered_retention_days steuert, wie lange zugestellte Bestellungen erhalten bleiben. update_interval steuert das Prüfintervall. initial_scan_days steuert den ersten Scan-Zeitraum. require_amazon_sender filtert Nicht-Amazon-Absender. expose_*-Optionen steuern, welche Bestelldetails als Sensorattribute sichtbar sind.",
-        "data": {
-          "expose_delivery_details": "Lieferdetails anzeigen",
-          "expose_carrier": "Versanddienstleister anzeigen",
-          "expose_item_image": "Artikelbild anzeigen",
-          "expose_parser_debug": "Parser-Debug anzeigen"
-        },
-        "data_description": {
-          "expose_delivery_details": "Zeigt aus dem Mail-Inhalt erkannte Lieferprognose, Lieferfenster, Zustellzeitpunkt und Artikelanzahl an.",
-          "expose_carrier": "Zeigt den erkannten Versanddienstleister an, wenn er im Mail-Inhalt gefunden wird.",
-          "expose_item_image": "Zeigt eine geprüfte Amazon-Produktbild-URL aus dem Mail-Inhalt an.",
-          "expose_parser_debug": "Zeigt bereinigte Parser-Diagnosen an. Rohtext, Adressen, Bestellnummern und vollständige Links werden nicht ausgegeben."
+        "description": "Passe Scan, Verarbeitung und sichtbare Sensorattribute an.",
+        "sections": {
+          "scan": {
+            "name": "Scan und Aufbewahrung",
+            "description": "Legt fest, wie oft und wie weit zurück das Postfach durchsucht wird.",
+            "data": {
+              "delivered_retention_days": "Zugestellte Bestellungen behalten",
+              "update_interval": "Prüfintervall",
+              "initial_scan_days": "Erster Scan-Zeitraum",
+              "imap_folder": "IMAP-Ordner"
+            },
+            "data_description": {
+              "delivered_retention_days": "Anzahl Tage, die zugestellte Bestellungen in Home Assistant erhalten bleiben.",
+              "update_interval": "Minuten zwischen zwei automatischen Prüfungen des Postfachs.",
+              "initial_scan_days": "Anzahl Tage, die beim ersten Scan oder nach leerem Speicher rückwirkend durchsucht werden.",
+              "imap_folder": "Leer lassen für INBOX oder den genauen Ordnernamen eintragen, z. B. INBOX/Amazon."
+            }
+          },
+          "processing": {
+            "name": "Verarbeitung",
+            "description": "Steuert, welche Mails verarbeitet werden und ob sie im Postfach verändert werden.",
+            "data": {
+              "mark_as_read": "Verarbeitete Mails als gelesen markieren",
+              "require_amazon_sender": "Nur Amazon-Absender akzeptieren"
+            },
+            "data_description": {
+              "mark_as_read": "Markiert erkannte Amazon-Statusmails nach der Verarbeitung als gelesen.",
+              "require_amazon_sender": "Ignoriert passende Betreffzeilen, wenn die Absender-Header nicht zu einer Amazon-Domain gehören."
+            }
+          },
+          "attributes": {
+            "name": "Sichtbare Sensorattribute",
+            "description": "Diese Optionen steuern, welche potenziell sensiblen Bestelldetails im Dashboard nutzbar sind.",
+            "data": {
+              "expose_order_id": "Bestellnummer anzeigen",
+              "expose_item_title": "Artikeltitel anzeigen",
+              "expose_tracking_url": "Bestell-/Tracking-Link anzeigen",
+              "expose_delivery_details": "Lieferdetails anzeigen",
+              "expose_carrier": "Versanddienstleister anzeigen",
+              "expose_item_image": "Artikelbild anzeigen",
+              "expose_parser_debug": "Parser-Diagnose anzeigen"
+            },
+            "data_description": {
+              "expose_order_id": "Zeigt Bestellnummern in den Sensorattributen an.",
+              "expose_item_title": "Zeigt erkannte Artikeltitel in den Sensorattributen an.",
+              "expose_tracking_url": "Zeigt geprüfte HTTPS-Links zu Amazon-Bestellungen oder Trackingseiten an.",
+              "expose_delivery_details": "Zeigt Lieferprognose, Lieferfenster, Zustellzeitpunkt und Artikelanzahl aus dem Mail-Inhalt an.",
+              "expose_carrier": "Zeigt den erkannten Versanddienstleister an, wenn er im Mail-Inhalt gefunden wird.",
+              "expose_item_image": "Zeigt eine geprüfte Amazon-Produktbild-URL aus dem Mail-Inhalt an.",
+              "expose_parser_debug": "Zeigt bereinigte Parser-Diagnosen an. Rohtext, Adressen, Bestellnummern und vollständige Links werden nicht ausgegeben."
+            }
+          }
         }
       }
     }
