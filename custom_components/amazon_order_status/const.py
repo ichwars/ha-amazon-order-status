@@ -13,6 +13,9 @@ ERROR_CANNOT_CONNECT = "cannot_connect"
 ERROR_INVALID_AUTH = "invalid_auth"
 
 SERVICE_PURGE_ORDER = "purge_order"
+SERVICE_RESCAN = "rescan"
 ATTR_ORDER_ID = "order_id"
+ATTR_DAYS = "days"
+ATTR_CLEAR_EXISTING = "clear_existing"
 
 DEFAULT_POLL_INTERVAL = 1800  # 30 minutes

@@ -53,10 +53,17 @@ STORAGE_VERSION = 1
 STORAGE_KEY = "amazon_order_status"
 ORDERS_KEY = "orders"
 
-ORDER_REGEX = re.compile(
-    r"(?:Order|Purchase)\s*(?:#|number|ID|No\.?)?\s*[:#]?\s*"
-    r"([0-9]{3}-[0-9]{7}-[0-9]{7}|[0-9\-]{10,})",
-    re.IGNORECASE,
+ORDER_ID_REGEXES = (
+    # Standard Amazon order IDs are distinctive enough to detect anywhere,
+    # including German mails where the label can vary or be omitted in links.
+    re.compile(r"\b([0-9]{3}-[0-9]{7}-[0-9]{7})\b"),
+    re.compile(
+        r"(?:Order|Purchase|Bestellung|Bestellnummer|"
+        r"Bestell(?:-|\s*)Nr\.?|Bestell(?:-|\s*)ID)"
+        r"\s*(?:#|number|ID|No\.?|Nr\.?)?\s*[:#]?\s*"
+        r"([0-9][0-9\-]{9,})",
+        re.IGNORECASE,
+    ),
 )
 
 # IMAP INTERNALDATE format: "08-Feb-2025 18:30:00 +0000"
@@ -70,16 +77,165 @@ def _imap_date_str(dt: datetime) -> str:
     """Return date in IMAP format dd-Mon-yyyy (English month) for SEARCH SINCE."""
     return f"{dt.day:02d}-{_IMAP_MONTHS[dt.month - 1]}-{dt.year}"
 
-STATUS_MAP = {
-    "successfully placed your order": "Ordered",
-    "we've received your order": "Ordered",
-    "preparing your automatic refill order": "Ordered",
-    "automatic refill order": "Ordered",
-    "ordered": "Ordered",
-    "shipped": "Shipped",
-    "out for delivery": "Out for delivery",
-    "delivered": "Delivered",
+
+def _extract_order_ids_from_text(*texts: str) -> list[str]:
+    """Extract Amazon order IDs from plain text, HTML, and embedded links."""
+    order_ids: list[str] = []
+    for text in texts:
+        if not text:
+            continue
+        for regex in ORDER_ID_REGEXES:
+            for order_id in regex.findall(text):
+                if order_id not in order_ids:
+                    order_ids.append(order_id)
+    return order_ids
+
+
+def _extract_item_title(subject: str) -> str | None:
+    """Extract a human-readable item title from Amazon status subjects."""
+    match = re.search(r"^[^:]+:\s*[„\"“]?(.+?)[”\"“]?$", subject)
+    if not match:
+        return None
+
+    item = match.group(1)
+    item = re.split(r"\s+-\s+amazon\.", item, maxsplit=1, flags=re.IGNORECASE)[0]
+    item_lower = item.lower()
+    if "bestellung #" in item_lower or "artikel |" in item_lower:
+        return None
+
+    item = item.strip(" „\"“”")
+    return item or None
+
+
+def _normalize_item_key(item_title: str | None) -> str | None:
+    """Normalize an item title for matching related Amazon status emails."""
+    if not item_title:
+        return None
+
+    item = re.sub(r"\.\.\.|…", " ", item_title.lower())
+    item = re.sub(r"[^a-z0-9äöüß]+", " ", item)
+    item = re.sub(r"\s+", " ", item).strip()
+    return item or None
+
+
+def _subject_item_key(subject: str) -> str | None:
+    """Return a normalized item key from status subjects like 'Versendet: "Item"'."""
+    return _normalize_item_key(_extract_item_title(subject))
+
+
+def _order_item_key(order: dict) -> str | None:
+    """Return the best available normalized item key for a stored order."""
+    return _normalize_item_key(order.get("item_title")) or _subject_item_key(
+        order.get("subject", "")
+    )
+
+
+def _history_entry(
+    status: str,
+    subject: str,
+    updated: str,
+    tracking_url: str | None,
+) -> dict:
+    """Build a compact history event for a status email."""
+    return {
+        "status": status,
+        "subject": subject,
+        "updated": updated,
+        "tracking_url": tracking_url,
+    }
+
+
+def _append_history(existing: dict | None, event: dict) -> list[dict]:
+    """Append a status event unless it is already present."""
+    history = list((existing or {}).get("history") or [])
+    if not any(
+        item.get("status") == event["status"]
+        and item.get("updated") == event["updated"]
+        and item.get("subject") == event["subject"]
+        for item in history
+    ):
+        history.append(event)
+    return history[-20:]
+
+
+LANGUAGE_PROFILES = {
+    "en": {
+        "Ordered": (
+            r"\bsuccessfully placed your order\b",
+            r"\bwe've received your order\b",
+            r"\bpreparing your automatic refill order\b",
+            r"\bautomatic refill order\b",
+            r"\bordered\b",
+        ),
+        "Shipped": (
+            r"\bshipped\b",
+        ),
+        "Out for delivery": (
+            r"\bout for delivery\b",
+        ),
+        "Delivered": (
+            r"\bdelivered\b",
+        ),
+    },
+    "de": {
+        "Ordered": (
+            r"\bbestellt\b",
+            r"\bbestellbestätigung\b",
+            r"\bdanke für ihre bestellung\b",
+            r"\bwir haben ihre bestellung erhalten\b",
+            r"\bbestellung (?:bestätigt|aufgegeben)\b",
+            r"\bihre amazon\.de[- ]bestellung\b",
+            r"\bihre bestellung bei amazon\.de\b",
+        ),
+        "Shipped": (
+            r"\bversandt\b",
+            r"\bverschickt\b",
+            r"\bversendet\b",
+            r"\bunterwegs\b",
+            r"\bauf de[mn] weg\b",
+        ),
+        "Out for delivery": (
+            r"\bkommt heute\b",
+            r"\bwird heute (?:zugestellt|geliefert)\b",
+            r"\bin (?:der )?zustellung\b",
+            r"\bzustellung heute\b",
+        ),
+        "Delivered": (
+            r"\bzugestellt\b",
+            r"\bgeliefert\b",
+            r"\bangekommen\b",
+            r"\babholbereit\b",
+        ),
+    },
 }
+
+STATUS_MATCH_ORDER = (
+    "Out for delivery",
+    "Delivered",
+    "Shipped",
+    "Ordered",
+)
+
+
+def _compile_status_patterns() -> tuple[tuple[str, re.Pattern[str], str], ...]:
+    """Compile localized status patterns in a precedence-safe order."""
+    compiled = []
+    for status in STATUS_MATCH_ORDER:
+        for language, profile in LANGUAGE_PROFILES.items():
+            for pattern in profile.get(status, ()):
+                compiled.append((language, re.compile(pattern, re.IGNORECASE), status))
+    return tuple(compiled)
+
+
+STATUS_PATTERNS = _compile_status_patterns()
+
+STATUS_RANKS = {
+    "Ordered": 0,
+    "Shipped": 1,
+    "Out for delivery": 2,
+    "Delivered": 3,
+}
+
 
 def _select_folder(mail: imaplib.IMAP4, folder: str) -> None:
     """Select an IMAP mailbox. Use standard select() when safe; otherwise send SELECT line ourselves.
@@ -115,7 +271,8 @@ class AmazonOrdersCoordinator(DataUpdateCoordinator):
     def __init__(self, hass: HomeAssistant, entry: ConfigEntry):
         self.hass = hass
         self.entry = entry
-        self._store = Store(hass, STORAGE_VERSION, STORAGE_KEY)
+        self._store = Store(hass, STORAGE_VERSION, f"{STORAGE_KEY}_{entry.entry_id}")
+        self._legacy_store = Store(hass, STORAGE_VERSION, STORAGE_KEY)
         self._orders: Dict[str, dict] = {}
         self.delivered_retention_days = entry.options.get("delivered_retention_days", 7)
         self._mark_as_read = entry.options.get(CONF_MARK_AS_READ, False)
@@ -137,21 +294,53 @@ class AmazonOrdersCoordinator(DataUpdateCoordinator):
         )
 
     """ Timestamp storage/retrieval functions to reduce email check time """
-    async def async_load_last_check(self) -> datetime | None:
+    async def _async_load_state(self) -> dict | None:
+        """Load persisted state, falling back to the legacy global store key."""
         stored = await self._store.async_load()
+        if stored:
+            return stored
+
+        legacy_stored = await self._legacy_store.async_load()
+        if legacy_stored:
+            _LOGGER.debug("Loaded legacy Amazon Order Status storage")
+            return legacy_stored
+
+        return None
+
+    async def async_load_last_check(self) -> datetime | None:
+        stored = await self._async_load_state()
         if stored and LAST_CHECK_KEY in stored:
             return datetime.fromisoformat(stored[LAST_CHECK_KEY])
         return None
 
     async def async_load_stored_orders(self) -> None:
         """Load persisted orders from storage."""
-        stored = await self._store.async_load()
+        stored = await self._async_load_state()
         if stored:
             self._orders = stored.get(ORDERS_KEY, {})
+            self._normalize_stored_orders()
             _LOGGER.debug("Loaded %d stored Amazon orders", len(self._orders))
         else:
             self._orders = {}
             _LOGGER.debug("No stored Amazon orders found")
+
+    def _normalize_stored_orders(self) -> None:
+        """Backfill new fields for orders saved by older integration versions."""
+        for order in self._orders.values():
+            subject = order.get("subject", "")
+            item_title = order.get("item_title") or _extract_item_title(subject)
+            if item_title:
+                order["item_title"] = item_title
+            order.setdefault("last_subject", subject)
+            if not order.get("history") and order.get("status") and order.get("updated"):
+                order["history"] = [
+                    _history_entry(
+                        order["status"],
+                        order.get("last_subject") or subject,
+                        order["updated"],
+                        order.get("tracking_url"),
+                    )
+                ]
 
     async def async_save_state(self, last_check: datetime) -> None:
         await self._store.async_save(
@@ -160,6 +349,10 @@ class AmazonOrdersCoordinator(DataUpdateCoordinator):
                 ORDERS_KEY: self._orders,
             }
         )
+
+    def _current_data(self) -> list[dict]:
+        """Return coordinator data including order IDs."""
+        return [{**v, "order_id": k} for k, v in self._orders.items()]
 
     async def _async_update_data(self):
         _LOGGER.debug("Coordinator update triggered at %s", datetime.now(timezone.utc))
@@ -183,7 +376,7 @@ class AmazonOrdersCoordinator(DataUpdateCoordinator):
         await self.async_save_state(now)
 
         # Include order_id in each item so sensors and services can use it
-        return [{**v, "order_id": k} for k, v in self._orders.items()]
+        return self._current_data()
 
     @callback
     def async_update_interval(self, minutes: int):
@@ -252,10 +445,33 @@ class AmazonOrdersCoordinator(DataUpdateCoordinator):
         _LOGGER.debug("Purged order %s by user request", order_id)
         now = self.last_check or datetime.now(timezone.utc)
         await self.async_save_state(now)
-        self.async_set_updated_data(
-            [{**v, "order_id": k} for k, v in self._orders.items()]
-        )
+        self.async_set_updated_data(self._current_data())
         return True
+
+    async def async_rescan(self, days: int = 14, clear_existing: bool = False) -> int:
+        """Rescan a configurable lookback window and publish updated data."""
+        days = max(1, min(int(days), 365))
+        now = datetime.now(timezone.utc)
+        since = now - timedelta(days=days)
+
+        if clear_existing:
+            _LOGGER.debug("Clearing Amazon orders before %d-day rescan", days)
+            self._orders = {}
+        elif not self._orders:
+            await self.async_load_stored_orders()
+
+        _LOGGER.debug("Manual Amazon order rescan started for last %d days", days)
+        await self.hass.async_add_executor_job(
+            self._fetch_and_parse_emails,
+            since,
+            now,
+        )
+        self.last_check = now
+        self._purge_old_delivered_orders(now)
+        await self.async_save_state(now)
+        self.async_set_updated_data(self._current_data())
+        _LOGGER.debug("Manual Amazon order rescan finished with %d tracked orders", len(self._orders))
+        return len(self._orders)
 
     def _fetch_and_parse_emails(self, last_check: datetime | None, now: datetime):
         """Connect to IMAP and parse Amazon emails."""
@@ -357,12 +573,15 @@ class AmazonOrdersCoordinator(DataUpdateCoordinator):
 
             # Collect order IDs from both plain text and HTML; many "shipped" emails
             # put the order number only in the HTML part, so we must check both.
-            order_ids = list(
-                dict.fromkeys(
-                    ORDER_REGEX.findall(body_text)
-                    + (ORDER_REGEX.findall(html_body) if html_body else [])
-                )
-            )
+            order_ids = _extract_order_ids_from_text(subject, body_text, html_body)
+            if not order_ids:
+                order_ids = self._order_ids_for_subject_item(subject)
+                if order_ids:
+                    _LOGGER.debug(
+                        "Matched email without order number to existing order(s) %s by subject: %s",
+                        ", ".join(order_ids),
+                        subject,
+                    )
             if not order_ids:
                 _LOGGER.debug(
                     "No order numbers found in email (subject: %s). "
@@ -381,11 +600,24 @@ class AmazonOrdersCoordinator(DataUpdateCoordinator):
                 # Only overwrite if we don't have this order or this email is newer than stored
                 existing = self._orders.get(order_id)
                 if existing:
+                    existing_status_rank = STATUS_RANKS.get(existing.get("status"), -1)
+                    new_status_rank = STATUS_RANKS.get(status, -1)
+                    if new_status_rank < existing_status_rank:
+                        _LOGGER.debug(
+                            "Order %s: skipping status regression %s -> %s",
+                            order_id,
+                            existing.get("status"),
+                            status,
+                        )
+                        continue
                     try:
                         existing_updated = _to_utc(
                             datetime.fromisoformat(existing["updated"])
                         )
-                        if received_utc < existing_updated:
+                        if (
+                            new_status_rank == existing_status_rank
+                            and received_utc < existing_updated
+                        ):
                             _LOGGER.debug(
                                 "Order %s: skipping (email %s older than stored)",
                                 order_id,
@@ -395,11 +627,33 @@ class AmazonOrdersCoordinator(DataUpdateCoordinator):
                     except (ValueError, TypeError):
                         pass
 
+                stored_subject = subject
+                stored_tracking_url = tracking_url
+                item_title = _extract_item_title(subject)
+                if existing:
+                    existing_subject = existing.get("subject", "")
+                    existing_item_title = existing.get("item_title") or _extract_item_title(
+                        existing_subject
+                    )
+                    if item_title is None:
+                        item_title = existing_item_title
+                    if (
+                        existing_item_title
+                        and not _subject_item_key(subject)
+                    ):
+                        stored_subject = existing_subject
+                    if stored_tracking_url is None:
+                        stored_tracking_url = existing.get("tracking_url")
+
+                event = _history_entry(status, subject, updated_ts, tracking_url)
                 self._orders[order_id] = {
                     "status": status,
-                    "subject": subject,
+                    "subject": stored_subject,
+                    "last_subject": subject,
+                    "item_title": item_title,
                     "updated": updated_ts,
-                    "tracking_url": tracking_url,
+                    "tracking_url": stored_tracking_url,
+                    "history": _append_history(existing, event),
                 }
                 did_update = True
                 _LOGGER.debug(
@@ -418,10 +672,22 @@ class AmazonOrdersCoordinator(DataUpdateCoordinator):
 
     def _status_from_subject(self, subject: str) -> str | None:
         """Determine order status from email subject."""
-        for key, value in STATUS_MAP.items():
-            if key in subject:
-                return value
+        for _language, pattern, status in STATUS_PATTERNS:
+            if pattern.search(subject):
+                return status
         return None
+
+    def _order_ids_for_subject_item(self, subject: str) -> list[str]:
+        """Find existing tracked orders with the same item title in the subject."""
+        item_key = _subject_item_key(subject)
+        if not item_key:
+            return []
+
+        return [
+            order_id
+            for order_id, order in self._orders.items()
+            if _order_item_key(order) == item_key
+        ]
 
     def _decode_header(self, value: str) -> str:
         """Decode email headers safely."""
@@ -470,11 +736,20 @@ class AmazonOrdersCoordinator(DataUpdateCoordinator):
         for link in soup.find_all("a", href=True):
             text = link.get_text(" ", strip=True).lower()
             href = html.unescape(link["href"])
+            href_lower = href.lower()
 
             # Case 1: Tracking links
-            if "track package" in text or "progress-tracker" in href:
+            if (
+                "track package" in text
+                or "paket verfolgen" in text
+                or "sendung verfolgen" in text
+                or "lieferung verfolgen" in text
+                or "progress-tracker" in href_lower
+                or "ship-track" in href_lower
+            ):
                 match = re.search(
-                    r"https://www\.amazon\.com/progress-tracker/[^&\"]+",
+                    r"https://www\.amazon\.[^/\"&]+/"
+                    r"(?:progress-tracker|gp/your-account/ship-track)/[^&\"]+",
                     href,
                 )
                 if match:
@@ -482,7 +757,19 @@ class AmazonOrdersCoordinator(DataUpdateCoordinator):
                 return href
 
             # Case 2: Order management links
-            if "your-orders" in href and ("view" in text or "edit order" in text):
+            if (
+                ("your-orders" in href_lower or "order-details" in href_lower)
+                and (
+                    "view" in text
+                    or "edit order" in text
+                    or "ansehen" in text
+                    or "anzeigen" in text
+                    or "details" in text
+                    or "meine bestellungen" in text
+                    or "bearbeiten" in text
+                    or "ändern" in text
+                )
+            ):
                 return href
 
         return None

@@ -7,7 +7,14 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.helpers import config_validation as cv
 
-from .const import DOMAIN, SERVICE_PURGE_ORDER, ATTR_ORDER_ID
+from .const import (
+    ATTR_CLEAR_EXISTING,
+    ATTR_DAYS,
+    ATTR_ORDER_ID,
+    DOMAIN,
+    SERVICE_PURGE_ORDER,
+    SERVICE_RESCAN,
+)
 from .coordinator import AmazonOrdersCoordinator
 
 _LOGGER = logging.getLogger(__name__)
@@ -19,6 +26,25 @@ PURGE_ORDER_SCHEMA = vol.Schema(
     {vol.Optional(ATTR_ORDER_ID, default=""): cv.string}
 )
 
+RESCAN_SCHEMA = vol.Schema(
+    {
+        vol.Optional(ATTR_DAYS, default=14): vol.All(
+            vol.Coerce(int),
+            vol.Range(min=1, max=365),
+        ),
+        vol.Optional(ATTR_CLEAR_EXISTING, default=False): cv.boolean,
+    }
+)
+
+
+def _iter_coordinators(hass: HomeAssistant):
+    """Yield loaded coordinators once, even if stored under multiple keys."""
+    seen: set[int] = set()
+    for value in (hass.data.get(DOMAIN) or {}).values():
+        if isinstance(value, AmazonOrdersCoordinator) and id(value) not in seen:
+            seen.add(id(value))
+            yield value
+
 
 async def _handle_purge_order(hass: HomeAssistant, call: ServiceCall) -> None:
     """Remove a specific order from tracking."""
@@ -29,14 +55,30 @@ async def _handle_purge_order(hass: HomeAssistant, call: ServiceCall) -> None:
             "If using a dashboard button, call script.purge_amazon_order instead so the order ID is read when you tap."
         )
         return
-    domain_data = hass.data.get(DOMAIN) or {}
     removed = False
-    for key, value in domain_data.items():
-        if isinstance(value, AmazonOrdersCoordinator):
-            if await value.async_purge_order(order_id):
-                removed = True
+    for coordinator in _iter_coordinators(hass):
+        if await coordinator.async_purge_order(order_id):
+            removed = True
     if not removed:
         _LOGGER.warning("Order %s not found or already purged", order_id)
+
+
+async def _handle_rescan(hass: HomeAssistant, call: ServiceCall) -> None:
+    """Rescan Amazon order emails over a configurable lookback period."""
+    days = call.data.get(ATTR_DAYS, 14)
+    clear_existing = call.data.get(ATTR_CLEAR_EXISTING, False)
+    rescanned = 0
+    for coordinator in _iter_coordinators(hass):
+        rescanned += 1
+        count = await coordinator.async_rescan(days, clear_existing)
+        _LOGGER.debug(
+            "Rescan completed for %s with %d tracked orders",
+            coordinator.entry.entry_id,
+            count,
+        )
+
+    if rescanned == 0:
+        _LOGGER.warning("rescan called but no Amazon Order Status coordinator is loaded")
 
 
 def _make_purge_order_handler(hass: HomeAssistant):
@@ -44,6 +86,15 @@ def _make_purge_order_handler(hass: HomeAssistant):
 
     async def handler(call: ServiceCall) -> None:
         await _handle_purge_order(hass, call)
+
+    return handler
+
+
+def _make_rescan_handler(hass: HomeAssistant):
+    """Return an async rescan service handler that closes over hass."""
+
+    async def handler(call: ServiceCall) -> None:
+        await _handle_rescan(hass, call)
 
     return handler
 
@@ -70,6 +121,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             SERVICE_PURGE_ORDER,
             _make_purge_order_handler(hass),
             schema=PURGE_ORDER_SCHEMA,
+        )
+    if not hass.services.has_service(DOMAIN, SERVICE_RESCAN):
+        hass.services.async_register(
+            DOMAIN,
+            SERVICE_RESCAN,
+            _make_rescan_handler(hass),
+            schema=RESCAN_SCHEMA,
         )
 
     # Forward entry setups (sensors)

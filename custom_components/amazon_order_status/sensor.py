@@ -69,9 +69,13 @@ class AmazonOrderStatusSensor(CoordinatorEntity, Entity):
         return [
             {
                 "order_id": data.get("order_id"),
+                "item_title": data.get("item_title"),
+                "status": data.get("status"),
                 "subject": data.get("subject"),
+                "last_subject": data.get("last_subject", data.get("subject")),
                 "updated": data.get("updated"),
                 "tracking_url": data.get("tracking_url"),
+                "history": data.get("history", []),
             }
             for data in self.coordinator.data
             if data.get("status") == self.status

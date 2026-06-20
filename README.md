@@ -11,9 +11,14 @@ We obtain this information via email as Amazon does not publish any public API t
 **Features**
 
 * Automatically track Amazon order delivery status.
+* Parse English and German Amazon order status emails through language profiles.
+* Match related emails by Amazon order ID first, then by item title when Amazon omits the order ID from shipped or out-for-delivery emails.
+* Preserve item titles separately from the raw email subject.
+* Track compact status history per order.
 * Configurable polling interval to check for new order updates.
 * Optional automatic marking of processed emails as read.
 * Configurable retention for delivered orders.
+* Service for manual rescans without deleting Home Assistant storage files.
 * Fully customizable options via Home Assistant's UI.
 
 **Installation**
@@ -22,13 +27,13 @@ We obtain this information via email as Amazon does not publish any public API t
 
 Click here: 
 
-[![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=koconnorgit&repository=ha-amazon-order-status&category=integration)
+[![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=ichwars&repository=ha-amazon-order-status&category=integration)
 
 OR
 
    * Open HACS (Home Assistant Community Store) in Home Assistant
    * Click the three dots menu (top right) and select Custom repositories
-   * Put koconnorgit/ha-amazon-order-status for Repository, and Integration for Category, then click "Add".
+   * Put ichwars/ha-amazon-order-status for Repository, and Integration for Category, then click "Add".
    * Click "Explore and Download Repositories" in the lower right.  Search for "Amazon Order Status" and install
    * Restart Home Assistant
 
@@ -37,7 +42,7 @@ OR
 
 *Manual*
 
-Download the Integration: https://github.com/koconnorgit/ha-amazon-order-status/releases/latest
+Download the Integration: https://github.com/ichwars/ha-amazon-order-status
 
 Place the amazon_order_status folder in your Home Assistant custom_components directory:
 * Home Assistant Directory/custom_components/amazon_order_status/
@@ -100,9 +105,22 @@ The ```sensor.amazon_orders_last_updated``` sensor contains a datestamp indicati
 
 The remaining sensors contain the following attributes :
 * ```order_id``` (Amazon Order ID)
-* ```subject``` (contains a truncated order name taken from the subject line of the email)
+* ```item_title``` (best available item title parsed from Amazon status emails)
+* ```status``` (current normalized status)
+* ```subject``` (display subject; preserves the item title when later emails only contain a generic delivery subject)
+* ```last_subject``` (raw subject from the most recent email that updated the order)
 * ```updated``` (send date of the email - indicates the date/time of the most recent order update.  This will be an iso date stamp, which can be reformatted via templates in any way you choose. Some examples are below.)
-* ```tracking_url``` (provides the link back to the amazon order tracking page for that order.
+* ```tracking_url``` (provides the link back to the amazon order tracking page for that order)
+* ```history``` (compact list of status changes seen for the order)
+
+This integration tracks the current status for each order. A single order will appear in one status sensor at a time: Ordered → Shipped → Out for delivery → Delivered. Status updates are monotonic, so a late "ordered" email will not move an already-shipped order backwards.
+
+German Amazon.de subjects such as these are supported:
+
+* ```Bestellt: "Item name"```
+* ```Versendet: "Item name"```
+* ```In Zustellung: "Item name"```
+* ```Zugestellt: 1 Artikel | Bestellung # 123-4567890-1234567```
 
 ...these can be parsed though markdown or other methods to display the Order dates, tracking links, etc. on the dashboard.    Here is an example markdown card to display order information from the ```sensor.amazon_orders_ordered``` sensor:
 
@@ -112,13 +130,38 @@ The remaining sensors contain the following attributes :
 Amazon Orders – Ordered
 {% set orders = state_attr('sensor.amazon_orders_ordered', 'orders') or [] %}
 {% for data in orders %}
-- **Item:** {{ data.subject }}
+- **Item:** {{ data.item_title or data.subject }}
   - Updated: {{ data.updated | as_timestamp | timestamp_custom('%b %d at %I:%M %p') }}
   - [Track Package]({{ data.tracking_url }})
 {% else %}
 _No orders in this state._
 {% endfor %}
 ```
+
+**Services**
+
+```amazon_order_status.purge_order```
+
+Remove a specific order from tracking by order ID.
+
+```yaml
+service: amazon_order_status.purge_order
+data:
+  order_id: "123-4567890-1234567"
+```
+
+```amazon_order_status.rescan```
+
+Rescan Amazon order emails over a configurable lookback period. This replaces the old manual workflow of deleting ```/config/.storage/amazon_order_status``` when you want to rebuild the tracked order state.
+
+```yaml
+service: amazon_order_status.rescan
+data:
+  days: 30
+  clear_existing: true
+```
+
+Use ```clear_existing: true``` when you want to rebuild the order list from the selected email lookback window. Use ```clear_existing: false``` to keep existing orders and only merge any status emails found in the lookback window.
 
 Occasionally Amazon ships packages through 3d party couriers and a "Delivered" email is never sent (or drastically delayed).  To account for this, you can manually delete orders from the database.  You can pass the order id to ```amazon_order_status.purge_order``` through dev tools, although it's easier to create a helper and script, and pass values to the script via a button card.
 

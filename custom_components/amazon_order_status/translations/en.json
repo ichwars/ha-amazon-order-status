@@ -29,6 +29,20 @@
           "description": "The Amazon order number to remove (e.g. 123-4567890-1234567). You can copy this from the sensor's order list."
         }
       }
+    },
+    "rescan": {
+      "name": "Rescan orders",
+      "description": "Rescan Amazon order emails over a configurable lookback period.",
+      "fields": {
+        "days": {
+          "name": "Days",
+          "description": "Number of days to scan back from now."
+        },
+        "clear_existing": {
+          "name": "Clear existing",
+          "description": "Clear tracked orders before scanning."
+        }
+      }
     }
   }
 }

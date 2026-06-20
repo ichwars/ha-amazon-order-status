@@ -8,3 +8,23 @@ purge_order:
       description: The Amazon order number to remove (e.g. 123-4567890-1234567). Copy from sensor attributes.
       required: true
       example: "123-4567890-1234567"
+
+rescan:
+  description: Rescan Amazon order emails over a configurable lookback period.
+  fields:
+    days:
+      description: Number of days to scan back from now.
+      required: false
+      default: 14
+      example: 30
+      selector:
+        number:
+          min: 1
+          max: 365
+          mode: box
+    clear_existing:
+      description: Clear tracked orders before scanning.
+      required: false
+      default: false
+      selector:
+        boolean: {}
