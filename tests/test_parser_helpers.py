@@ -72,6 +72,7 @@ class ParserHelpersTest(unittest.TestCase):
             "Bestellt: Fitorb Smart Ring Pro - Das...": "Ordered",
             "Versendet: Fitorb Smart Ring Pro - Das...": "Shipped",
             "In Zustellung: Fitorb Smart Ring Pro - Das...": "Out for delivery",
+            "Zustellversuch: 2 SUNLU ASA Filament 1.75mm,...": "Delivery attempted",
             "Zugestellt: 1 Artikel | Bestellung # 306-2300519-2315556": "Delivered",
         }
         for subject, expected in cases.items():
@@ -105,6 +106,13 @@ class ParserHelpersTest(unittest.TestCase):
             fake._order_ids_for_subject_item(
                 "In Zustellung: Fitorb Smart Ring Pro - Das..."
             ),
+        )
+
+    def test_delivered_count_subject_is_not_treated_as_item_title(self):
+        self.assertIsNone(
+            coordinator._extract_item_title(
+                "Zugestellt: 1\u202fArtikel\u202f|\u202fBestellung\u202f#\u202f306-2300519-2315556"
+            )
         )
 
     def test_subject_item_matching_skips_ambiguous_items(self):
@@ -174,8 +182,90 @@ class ParserHelpersTest(unittest.TestCase):
         )
         self.assertLess(
             coordinator.STATUS_RANKS["Out for delivery"],
+            coordinator.STATUS_RANKS["Delivery attempted"],
+        )
+        self.assertLess(
+            coordinator.STATUS_RANKS["Delivery attempted"],
             coordinator.STATUS_RANKS["Delivered"],
         )
+
+    def test_body_details_extract_delivery_window_title_count_and_image(self):
+        details = coordinator._parse_body_details(
+            "Bestellt: Fitorb Smart Ring Pro - Das...",
+            "Vielen Dank fuer deine Bestellung!\nZustellung: 24. Juni - 25. Juni\n1 Artikel",
+            """
+            <html>
+              <body>
+                <img src="https://m.media-amazon.com/images/G/01/outbound/etc/pixel.gif"
+                     width="19" height="19" alt="Ausstehend">
+                <a href="https://www.amazon.de/gp/r.html?x=1">
+                  <img src="https://m.media-amazon.com/images/I/71P8Vt3O5-L._SS90_.jpg"
+                       width="122"
+                       alt="Fitorb Smart Ring Pro - Das Original. High-Tech Fitnessring">
+                  Fitorb Smart Ring Pro - Das Origi...
+                </a>
+              </body>
+            </html>
+            """,
+            include_debug=True,
+        )
+
+        self.assertEqual(
+            "Fitorb Smart Ring Pro - Das Original. High-Tech Fitnessring",
+            details["item_title"],
+        )
+        self.assertEqual("24. Juni - 25. Juni", details["delivery_estimate"])
+        self.assertEqual(1, details["item_count"])
+        self.assertEqual(
+            "https://m.media-amazon.com/images/I/71P8Vt3O5-L._SS90_.jpg",
+            details["item_image_url"],
+        )
+        self.assertEqual("body_details", details["parser_debug"]["source"])
+        self.assertNotIn("306-2300519-2315556", str(details["parser_debug"]))
+
+    def test_body_details_extract_delivery_attempt_and_delivery_window(self):
+        details = coordinator._parse_body_details(
+            "Zustellversuch: 2 SUNLU ASA Filament 1.75mm,...",
+            "Deine Zustellung wurde versucht\nVersuchte Zustellung heute um 11:04",
+            """
+            <img src="https://m.media-amazon.com/images/I/71FVTr5YE3L._SS90_.jpg"
+                 width="122"
+                 alt="SUNLU ASA Filament 1.75mm, UV Regen Hitzebestaendig">
+            """,
+            include_debug=False,
+        )
+
+        self.assertEqual("heute um 11:04", details["delivered_at"])
+        self.assertEqual(
+            "SUNLU ASA Filament 1.75mm, UV Regen Hitzebestaendig",
+            details["item_title"],
+        )
+        self.assertNotIn("parser_debug", details)
+
+    def test_body_details_rejects_non_amazon_image_hosts(self):
+        details = coordinator._parse_body_details(
+            "Bestellt: Example",
+            "Zustellung: morgen",
+            '<img src="https://www.amazon.de.evil.test/image.jpg" width="122" alt="Example">',
+            include_debug=True,
+        )
+
+        self.assertNotIn("item_image_url", details)
+        self.assertEqual("morgen", details["delivery_estimate"])
+
+    def test_delivery_update_subject_is_recognized_without_status_regression(self):
+        subject = (
+            "Aktualisierung der voraussichtlichen Lieferung fuer deine "
+            "Amazon.com-Bestellung mit der Nummer 306-9382035-6671562"
+        )
+
+        self.assertIsNone(
+            coordinator.AmazonOrdersCoordinator._status_from_subject(
+                None,
+                subject.lower(),
+            )
+        )
+        self.assertTrue(coordinator._is_delivery_update_subject(subject.lower()))
 
     def test_scan_stats_defaults_are_stable(self):
         since = datetime(2026, 6, 19, tzinfo=timezone.utc)

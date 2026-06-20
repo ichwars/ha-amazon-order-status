@@ -1,5 +1,28 @@
 # Changelog
 
+## 1.4.8
+
+### Added
+
+- Body parser for targeted delivery details from Amazon status emails.
+- `Delivery attempted` status for failed delivery attempt emails.
+- Optional sensor attributes for delivery estimate, delivery window, delivered-at text, item count, carrier, item image URL, and sanitized parser debug.
+- Amazon product image extraction from trusted Amazon image CDN URLs.
+- Regression tests for body detail extraction, delivery update subjects, delivery attempts, image URL validation, and sensor privacy filtering.
+- HACS brand icon at `custom_components/amazon_order_status/brand/icon.png`.
+
+### Changed
+
+- Item titles can now be improved from Amazon email body HTML image alt text.
+- Delivery update emails without a direct status can enrich existing tracked orders without changing their current status.
+- Subject/item matching can use the full item title parsed from the email body.
+
+### Privacy
+
+- Raw email content is not stored.
+- New body-derived attributes are hidden by default and require explicit opt-in through integration options.
+- Parser debug is sanitized and only stores field names/counts, not order IDs, addresses, raw links, or message bodies.
+
 ## 1.4.7
 
 ### Added

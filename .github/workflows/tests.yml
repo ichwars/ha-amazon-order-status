@@ -13,7 +13,7 @@ jobs:
         with:
           python-version: "3.12"
       - name: Compile Python
-        run: python -m py_compile custom_components/amazon_order_status/*.py tests/test_parser_helpers.py
+        run: python -m py_compile custom_components/amazon_order_status/*.py tests/test_parser_helpers.py tests/test_sensor_helpers.py
       - name: Validate JSON
         run: |
           python - <<'PY'
@@ -28,4 +28,4 @@ jobs:
               json.loads(path.read_text(encoding="utf-8"))
           PY
       - name: Run regression tests
-        run: python -m unittest tests.test_parser_helpers
+        run: python -m unittest tests.test_parser_helpers tests.test_sensor_helpers

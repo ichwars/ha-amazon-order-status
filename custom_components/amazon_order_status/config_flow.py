@@ -19,8 +19,12 @@ import socket
 import voluptuous as vol
 
 from .const import (
+    CONF_EXPOSE_CARRIER,
+    CONF_EXPOSE_DELIVERY_DETAILS,
     CONF_EXPOSE_ITEM_TITLE,
+    CONF_EXPOSE_ITEM_IMAGE,
     CONF_EXPOSE_ORDER_ID,
+    CONF_EXPOSE_PARSER_DEBUG,
     CONF_EXPOSE_TRACKING_URL,
     CONF_IMAP_FOLDER,
     CONF_INITIAL_SCAN_DAYS,
@@ -142,6 +146,22 @@ def _setup_schema(defaults: dict[str, Any] | None = None) -> vol.Schema:
                 CONF_EXPOSE_TRACKING_URL,
                 default=defaults.get(CONF_EXPOSE_TRACKING_URL, True),
             ): BooleanSelector(),
+            vol.Optional(
+                CONF_EXPOSE_DELIVERY_DETAILS,
+                default=defaults.get(CONF_EXPOSE_DELIVERY_DETAILS, False),
+            ): BooleanSelector(),
+            vol.Optional(
+                CONF_EXPOSE_CARRIER,
+                default=defaults.get(CONF_EXPOSE_CARRIER, False),
+            ): BooleanSelector(),
+            vol.Optional(
+                CONF_EXPOSE_ITEM_IMAGE,
+                default=defaults.get(CONF_EXPOSE_ITEM_IMAGE, False),
+            ): BooleanSelector(),
+            vol.Optional(
+                CONF_EXPOSE_PARSER_DEBUG,
+                default=defaults.get(CONF_EXPOSE_PARSER_DEBUG, False),
+            ): BooleanSelector(),
         }
     )
     return vol.Schema(schema)
@@ -199,6 +219,19 @@ class AmazonOrdersConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         CONF_EXPOSE_TRACKING_URL: user_input.get(
                             CONF_EXPOSE_TRACKING_URL,
                             True,
+                        ),
+                        CONF_EXPOSE_DELIVERY_DETAILS: user_input.get(
+                            CONF_EXPOSE_DELIVERY_DETAILS,
+                            False,
+                        ),
+                        CONF_EXPOSE_CARRIER: user_input.get(CONF_EXPOSE_CARRIER, False),
+                        CONF_EXPOSE_ITEM_IMAGE: user_input.get(
+                            CONF_EXPOSE_ITEM_IMAGE,
+                            False,
+                        ),
+                        CONF_EXPOSE_PARSER_DEBUG: user_input.get(
+                            CONF_EXPOSE_PARSER_DEBUG,
+                            False,
                         ),
                     },
                 )

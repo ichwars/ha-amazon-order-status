@@ -89,15 +89,19 @@ Option - Description
 * ```expose_order_id```: If enabled, order IDs are exposed as sensor attributes. Default: True.
 * ```expose_item_title```: If enabled, parsed item titles are exposed as sensor attributes. Default: True.
 * ```expose_tracking_url```: If enabled, Amazon HTTPS tracking/order links are exposed as sensor attributes. Default: True.
+* ```expose_delivery_details```: If enabled, body-derived delivery estimate, delivery window, delivered-at text, and item count are exposed as sensor attributes. Default: False.
+* ```expose_carrier```: If enabled, detected shipping carrier names are exposed as sensor attributes. Default: False.
+* ```expose_item_image```: If enabled, trusted Amazon product image URLs parsed from the email body are exposed as sensor attributes. Default: False.
+* ```expose_parser_debug```: If enabled, sanitized parser diagnostics are exposed. Raw emails, addresses, order IDs, and full links are not exposed. Default: False.
 * ```imap_folder```: Optional - Specify a folder to search for emails rather than the default INBOX.  If left blank, defaults to searching INBOX.  If a folder is specified (Either "Folder Name" or "INBOX/Folder Name" depending on provider) email searches will be limited to that folder. 
 
 Upon initial installation, this integration scans the previous ```initial_scan_days``` worth of emails for Amazon order emails. Depending on the volume of email in the inbox, this initial scan could take anywhere from a few seconds to a few minutes. Once the initial data load is complete, the integration keeps track of its last-scanned date/time and performs only rapid scans of the messages received since the last check.
 
 **Upgrade and Migration**
 
-Version ```1.4.7``` keeps existing tracked orders and can read the legacy global storage key automatically. After updating through HACS or manually replacing the integration files, restart Home Assistant.
+Version ```1.4.8``` keeps existing tracked orders and can read the legacy global storage key automatically. After updating through HACS or manually replacing the integration files, restart Home Assistant.
 
-Version ```1.4.7``` changes entity unique IDs to include the config entry ID so multiple Amazon Order Status entries can coexist. Existing single-entry installations may see newly created entities after the update; remove old disabled/orphaned entities from the entity registry if Home Assistant keeps them around.
+Version ```1.4.7``` changed entity unique IDs to include the config entry ID so multiple Amazon Order Status entries can coexist. Existing single-entry installations may see newly created entities after updating from older releases; remove old disabled/orphaned entities from the entity registry if Home Assistant keeps them around.
 
 If you want to rebuild the tracked order list after upgrading, call ```amazon_order_status.rescan``` instead of deleting files from ```/config/.storage```. Use ```clear_existing: true``` for a clean rebuild from the selected lookback window.
 
@@ -113,9 +117,10 @@ The project is licensed under the MIT License. See ```LICENSE``` and ```CHANGELO
 
 * Option ```delivered_retention_days``` helps prevent the history from growing too large over time.
 
-Once configured, this integration creates 5 new sensors:
+Once configured, this integration creates 6 new sensors:
 
 * ```sensor.amazon_orders_delivered``` 
+* ```sensor.amazon_orders_delivery_attempted```
 * ```sensor.amazon_orders_out_for_delivery```
 * ```sensor.amazon_orders_ordered```
 * ```sensor.amazon_orders_shipped```
@@ -138,18 +143,27 @@ The remaining sensors contain the following attributes :
 * ```last_subject``` (raw subject from the most recent email that updated the order; only exposed when raw order IDs and item titles are enabled)
 * ```updated``` (send date of the email - indicates the date/time of the most recent order update.  This will be an iso date stamp, which can be reformatted via templates in any way you choose. Some examples are below.)
 * ```tracking_url``` (provides the link back to the amazon order tracking page for that order)
+* ```delivery_estimate``` (body-derived delivery date or phrase, such as ```24. Juni - 25. Juni``` or ```verzögert```)
+* ```delivery_window``` (body-derived time window, such as ```15h - 19h```)
+* ```delivered_at``` (body-derived delivered or attempted delivery phrase, such as ```heute um 11:04```)
+* ```carrier``` (detected carrier, when found)
+* ```item_count``` (detected item count)
+* ```item_image_url``` (trusted Amazon product image URL parsed from the email body)
+* ```parser_debug``` (sanitized parser diagnostics; no raw email text, addresses, order IDs, or full links)
 * ```history``` (compact list of status changes seen for the order)
 
-The ```order_id```, ```item_title```, and ```tracking_url``` attributes can be hidden through the integration options. To avoid indirect leaks, raw subjects in current orders and history events are only exposed when both order IDs and item titles are enabled; tracking URLs are also removed from history when tracking URL exposure is disabled. Tracking URLs are only kept when they point to HTTPS Amazon domains.
+The ```order_id```, ```item_title```, ```tracking_url```, body-derived delivery fields, carrier, item image URL, and parser debug attributes can be hidden through the integration options. To avoid indirect leaks, raw subjects in current orders and history events are only exposed when both order IDs and item titles are enabled; tracking URLs are also removed from history when tracking URL exposure is disabled. Tracking URLs are only kept when they point to HTTPS Amazon domains. Item image URLs are only kept when they point to trusted Amazon image CDN hosts.
 
-This integration tracks the current status for each order. A single order will appear in one status sensor at a time: Ordered → Shipped → Out for delivery → Delivered. Status updates are monotonic, so a late "ordered" email will not move an already-shipped order backwards.
+This integration tracks the current status for each order. A single order will appear in one status sensor at a time: Ordered → Shipped → Out for delivery → Delivery attempted → Delivered. Status updates are monotonic, so a late "ordered" email will not move an already-shipped order backwards.
 
 German Amazon.de subjects such as these are supported:
 
 * ```Bestellt: "Item name"```
 * ```Versendet: "Item name"```
 * ```In Zustellung: "Item name"```
+* ```Zustellversuch: "Item name"```
 * ```Zugestellt: 1 Artikel | Bestellung # 123-4567890-1234567```
+* ```Aktualisierung der voraussichtlichen Lieferung ... Bestellung ...```
 
 **Dashboard Example**
 

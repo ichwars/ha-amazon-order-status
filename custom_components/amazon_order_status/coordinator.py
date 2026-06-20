@@ -11,8 +11,9 @@ from dataclasses import dataclass
 import email.utils
 from email import message_from_bytes
 from email.header import decode_header
+from html.parser import HTMLParser
 from urllib.parse import urlparse
-from typing import Dict
+from typing import Any, Dict
 
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.config_entries import ConfigEntry
@@ -23,7 +24,11 @@ from bs4 import BeautifulSoup
 
 from .const import (
     CONF_EXPOSE_ITEM_TITLE,
+    CONF_EXPOSE_CARRIER,
+    CONF_EXPOSE_DELIVERY_DETAILS,
+    CONF_EXPOSE_ITEM_IMAGE,
     CONF_EXPOSE_ORDER_ID,
+    CONF_EXPOSE_PARSER_DEBUG,
     CONF_EXPOSE_TRACKING_URL,
     CONF_IMAP_FOLDER,
     CONF_INITIAL_SCAN_DAYS,
@@ -72,6 +77,14 @@ LAST_CHECK_KEY = "last_check"
 STORAGE_VERSION = 1
 STORAGE_KEY = "amazon_order_status"
 ORDERS_KEY = "orders"
+ORDER_DETAIL_FIELDS = (
+    "delivery_estimate",
+    "delivery_window",
+    "delivered_at",
+    "carrier",
+    "item_count",
+    "item_image_url",
+)
 
 ORDER_ID_REGEXES = (
     # Standard Amazon order IDs are distinctive enough to detect anywhere,
@@ -90,6 +103,12 @@ AMAZON_DOMAIN_PATTERN = re.compile(
     r"(^|\.)amazon\."
     r"(com|de|co\.uk|fr|it|es|nl|se|pl|com\.be|com\.mx|ca|co\.jp|"
     r"com\.au|com\.tr|ae|sa|sg|in|com\.br)$",
+    re.IGNORECASE,
+)
+AMAZON_IMAGE_DOMAIN_PATTERN = re.compile(
+    r"(^|\.)("
+    r"media-amazon\.com|ssl-images-amazon\.com|images-amazon\.com"
+    r")$",
     re.IGNORECASE,
 )
 
@@ -166,16 +185,302 @@ def _safe_amazon_url(href: str | None) -> str | None:
     return href
 
 
+def _domain_is_amazon_image(domain: str | None) -> bool:
+    """Return True if a URL host belongs to Amazon's image CDN."""
+    if not domain:
+        return False
+    return AMAZON_IMAGE_DOMAIN_PATTERN.search(domain.lower().strip(".")) is not None
+
+
+def _safe_amazon_image_url(src: str | None) -> str | None:
+    """Return image src only when it is an HTTPS Amazon image URL."""
+    if not src:
+        return None
+
+    parsed = urlparse(html.unescape(src))
+    if parsed.scheme != "https" or not _domain_is_amazon_image(parsed.hostname):
+        return None
+    return html.unescape(src)
+
+
+class _BodyHTMLParser(HTMLParser):
+    """Extract small, safe parsing hints from Amazon email HTML."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.images: list[dict[str, str]] = []
+        self.text_parts: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag.lower() != "img":
+            return
+
+        attr = {key.lower(): value or "" for key, value in attrs}
+        src = attr.get("src") or attr.get("data-src") or ""
+        if src:
+            self.images.append(
+                {
+                    "src": html.unescape(src),
+                    "alt": _clean_text(attr.get("alt", "")),
+                    "width": attr.get("width", ""),
+                    "height": attr.get("height", ""),
+                }
+            )
+
+    def handle_data(self, data: str) -> None:
+        clean = _clean_text(data)
+        if clean:
+            self.text_parts.append(clean)
+
+
+def _clean_text(value: str | None) -> str:
+    """Normalize whitespace and invisible Unicode markers from email text."""
+    if not value:
+        return ""
+    text = html.unescape(value)
+    text = re.sub(r"[\u00ad\u200b-\u200f\u202a-\u202e\u2066-\u2069\ufeff]", "", text)
+    text = text.replace("\xa0", " ")
+    text = re.sub(r"\s+", " ", text)
+    return text.strip()
+
+
+def _html_summary(html_body: str) -> _BodyHTMLParser:
+    """Parse HTML body with a small stdlib parser."""
+    parser = _BodyHTMLParser()
+    if html_body:
+        parser.feed(html_body)
+    return parser
+
+
+def _image_dimension(value: str) -> int:
+    """Parse an HTML image dimension attribute."""
+    try:
+        return int(re.sub(r"[^0-9]", "", value or "0") or "0")
+    except ValueError:
+        return 0
+
+
+def _is_ignored_image_alt(alt: str) -> bool:
+    """Return True for Amazon chrome/status image alt text."""
+    alt_lower = alt.lower()
+    return (
+        not alt
+        or alt_lower in {"amazon.de", "amazon", "ausstehend", "abgeschlossen"}
+        or "icon" in alt_lower
+        or "logo" in alt_lower
+    )
+
+
+def _extract_body_image_and_title(html_body: str) -> tuple[str | None, str | None, int]:
+    """Extract the best product image URL and title from Amazon email HTML."""
+    parser = _html_summary(html_body)
+    best: tuple[int, str | None, str | None] = (-1, None, None)
+
+    for image in parser.images:
+        safe_src = _safe_amazon_image_url(image.get("src"))
+        if not safe_src:
+            continue
+
+        parsed = urlparse(safe_src)
+        alt = _clean_text(image.get("alt"))
+        width = _image_dimension(image.get("width", ""))
+        height = _image_dimension(image.get("height", ""))
+        path = parsed.path.lower()
+        score = 0
+        if "/images/i/" in path:
+            score += 50
+        if width >= 80:
+            score += 20
+        if height and height <= 30:
+            score -= 20
+        if "pixel" in path or "logo" in path or "/images/g/" in path:
+            score -= 40
+        if not _is_ignored_image_alt(alt):
+            score += 30
+
+        if score > best[0]:
+            best = (score, safe_src, None if _is_ignored_image_alt(alt) else alt)
+
+    if best[0] < 20:
+        return None, None, len(parser.images)
+    return best[1], best[2], len(parser.images)
+
+
+def _combined_body_text(body_text: str, html_body: str) -> str:
+    """Return normalized plain text plus visible HTML text."""
+    parser = _html_summary(html_body)
+    body_lines = [_clean_text(line) for line in body_text.splitlines()]
+    parts = [line for line in body_lines if line]
+    parts.extend(parser.text_parts)
+    return "\n".join(part for part in parts if part)
+
+
+def _extract_item_count_from_text(text: str) -> int | None:
+    """Extract item count from German/English Amazon email text."""
+    match = re.search(r"\b([0-9]+)\s*(?:artikel|article|item)s?\b", text, re.IGNORECASE)
+    if not match:
+        return None
+    try:
+        return int(match.group(1))
+    except ValueError:
+        return None
+
+
+def _extract_delivery_estimate_from_text(text: str) -> str | None:
+    """Extract a human-readable delivery estimate from email body text."""
+    ignored_prefixes = (
+        "bestellt:",
+        "versendet:",
+        "in zustellung:",
+        "zugestellt:",
+        "zustellversuch:",
+    )
+    for line in (_clean_text(line) for line in text.splitlines()):
+        line_lower = line.lower()
+        if not line or line_lower.startswith(ignored_prefixes):
+            continue
+
+        for pattern in (
+            r"^Zustellung:\s*(.+)$",
+            r"^Lieferung:\s*(.+)$",
+            r"^Ankunft\s+(heute|morgen)(?:\s|$)",
+            r"^(?:kommt|ankunft)\s+(heute|morgen)\b",
+        ):
+            match = re.search(pattern, line, re.IGNORECASE)
+            if match:
+                return _clean_text(match.group(1)).rstrip(".")
+    if re.search(
+        r"\bLieferung ist verspätet\b|\bLieferung deiner Bestellung\b",
+        text,
+        re.IGNORECASE,
+    ):
+        return "verzögert"
+    return None
+
+
+def _extract_delivery_window_from_text(text: str) -> str | None:
+    """Extract delivery time window from email body text."""
+    for line in (_clean_text(line) for line in text.splitlines()):
+        match = re.search(
+            r"\b(?:Ankunft|Zustellung|Lieferung)\s+(?:heute|morgen)?\s*"
+            r"([0-9]{1,2}(?::[0-9]{2})?\s*h?\s*[–-]\s*[0-9]{1,2}(?::[0-9]{2})?\s*h?)",
+            line,
+            re.IGNORECASE,
+        )
+        if match:
+            return _clean_text(match.group(1)).rstrip(".")
+    return None
+
+
+def _extract_delivered_at_from_text(text: str) -> str | None:
+    """Extract delivered-at or attempted-at phrase from email body text."""
+    for line in (_clean_text(line) for line in text.splitlines()):
+        match = re.search(
+            r"\bVersuchte Zustellung[ \t]+([^\n\r.]+)",
+            line,
+            re.IGNORECASE,
+        )
+        if match:
+            return _clean_text(match.group(1))
+        match = re.search(r"\bZugestellt[ \t]+um[ \t]+([0-9]{1,2}:[0-9]{2})", line, re.IGNORECASE)
+        if match:
+            return f"um {match.group(1)}"
+        if re.search(r"\bHeute zugestellt\b", line, re.IGNORECASE):
+            return "heute"
+    return None
+
+
+def _extract_carrier_from_text(text: str) -> str | None:
+    """Extract a known carrier name from email body text."""
+    carriers = (
+        "Amazon Logistics",
+        "DHL",
+        "Deutsche Post",
+        "Hermes",
+        "UPS",
+        "DPD",
+        "GLS",
+    )
+    for carrier in carriers:
+        if re.search(rf"\b{re.escape(carrier)}\b", text, re.IGNORECASE):
+            return carrier
+    return None
+
+
+def _parse_body_details(
+    subject: str,
+    body_text: str,
+    html_body: str,
+    *,
+    include_debug: bool = False,
+) -> dict[str, Any]:
+    """Extract targeted order details from email body without storing raw content."""
+    combined_text = _combined_body_text(body_text, html_body)
+    image_url, image_title, image_count = _extract_body_image_and_title(html_body)
+    details: dict[str, Any] = {}
+
+    item_title = image_title or _extract_item_title(subject)
+    if item_title:
+        details["item_title"] = item_title
+
+    item_count = _extract_item_count_from_text(f"{subject}\n{combined_text}")
+    if item_count is not None:
+        details["item_count"] = item_count
+
+    delivery_estimate = _extract_delivery_estimate_from_text(combined_text)
+    if delivery_estimate:
+        details["delivery_estimate"] = delivery_estimate
+
+    delivery_window = _extract_delivery_window_from_text(combined_text)
+    if delivery_window:
+        details["delivery_window"] = delivery_window
+
+    delivered_at = _extract_delivered_at_from_text(combined_text)
+    if delivered_at:
+        details["delivered_at"] = delivered_at
+
+    carrier = _extract_carrier_from_text(combined_text)
+    if carrier:
+        details["carrier"] = carrier
+
+    if image_url:
+        details["item_image_url"] = image_url
+
+    if include_debug:
+        details["parser_debug"] = {
+            "source": "body_details",
+            "fields": sorted(details),
+            "image_candidates": image_count,
+            "has_body_text": bool(combined_text),
+        }
+
+    return details
+
+
+def _is_delivery_update_subject(subject_lower: str) -> bool:
+    """Return True for delivery update emails that may not contain a status."""
+    return any(
+        re.search(pattern, subject_lower, re.IGNORECASE)
+        for pattern in (
+            r"aktualisierung der voraussichtlichen lieferung",
+            r"lieferung ist verspätet",
+            r"delivery update",
+            r"estimated delivery",
+        )
+    )
+
+
 def _extract_item_title(subject: str) -> str | None:
     """Extract a human-readable item title from Amazon status subjects."""
+    subject = _clean_text(subject)
     match = re.search(r"^[^:]+:\s*[„\"“]?(.+?)[”\"“]?$", subject)
     if not match:
         return None
 
-    item = match.group(1)
+    item = _clean_text(match.group(1))
     item = re.split(r"\s+-\s+amazon\.", item, maxsplit=1, flags=re.IGNORECASE)[0]
     item_lower = item.lower()
-    if "bestellung #" in item_lower or "artikel |" in item_lower:
+    if "bestellung #" in item_lower or re.search(r"\bartikel\s*\|", item_lower):
         return None
 
     item = item.strip(" „\"“”")
@@ -272,6 +577,10 @@ LANGUAGE_PROFILES = {
         "Out for delivery": (
             r"\bout for delivery\b",
         ),
+        "Delivery attempted": (
+            r"\battempted delivery\b",
+            r"\bdelivery attempted\b",
+        ),
         "Delivered": (
             r"\bdelivered\b",
         ),
@@ -299,6 +608,11 @@ LANGUAGE_PROFILES = {
             r"\bin (?:der )?zustellung\b",
             r"\bzustellung heute\b",
         ),
+        "Delivery attempted": (
+            r"\bzustellversuch\b",
+            r"\bversuchte zustellung\b",
+            r"\bzustellung wurde versucht\b",
+        ),
         "Delivered": (
             r"\bzugestellt\b",
             r"\bgeliefert\b",
@@ -310,6 +624,7 @@ LANGUAGE_PROFILES = {
 
 STATUS_MATCH_ORDER = (
     "Out for delivery",
+    "Delivery attempted",
     "Delivered",
     "Shipped",
     "Ordered",
@@ -332,7 +647,8 @@ STATUS_RANKS = {
     "Ordered": 0,
     "Shipped": 1,
     "Out for delivery": 2,
-    "Delivered": 3,
+    "Delivery attempted": 3,
+    "Delivered": 4,
 }
 
 
@@ -380,6 +696,10 @@ class AmazonOrdersCoordinator(DataUpdateCoordinator):
         self.expose_order_id = entry.options.get(CONF_EXPOSE_ORDER_ID, True)
         self.expose_item_title = entry.options.get(CONF_EXPOSE_ITEM_TITLE, True)
         self.expose_tracking_url = entry.options.get(CONF_EXPOSE_TRACKING_URL, True)
+        self.expose_delivery_details = entry.options.get(CONF_EXPOSE_DELIVERY_DETAILS, False)
+        self.expose_carrier = entry.options.get(CONF_EXPOSE_CARRIER, False)
+        self.expose_item_image = entry.options.get(CONF_EXPOSE_ITEM_IMAGE, False)
+        self.expose_parser_debug = entry.options.get(CONF_EXPOSE_PARSER_DEBUG, False)
         # Get IMAP folder from options, default to "INBOX" if empty or not set
         folder = entry.options.get(CONF_IMAP_FOLDER, "")
         self._imap_folder = folder.strip() if folder and folder.strip() else "INBOX"
@@ -680,9 +1000,18 @@ class AmazonOrdersCoordinator(DataUpdateCoordinator):
 
                 subject = self._decode_header(msg.get("Subject", ""))
                 subject_lower = subject.lower()
+                body_text = self._extract_text(msg)
+                html_body = self._extract_html(msg)
+                body_details = _parse_body_details(
+                    subject,
+                    body_text,
+                    html_body,
+                    include_debug=self.expose_parser_debug,
+                )
 
                 status = self._status_from_subject(subject_lower)
-                if not status:
+                delivery_update = _is_delivery_update_subject(subject_lower)
+                if not status and not delivery_update:
                     _LOGGER.debug(
                         "Email %s: subject not recognized as order status, skipping: %s",
                         num,
@@ -692,14 +1021,14 @@ class AmazonOrdersCoordinator(DataUpdateCoordinator):
                     continue
                 scan_stats["recognized_count"] += 1
 
-                body_text = self._extract_text(msg)
-                html_body = self._extract_html(msg)
-
                 # Collect order IDs from both plain text and HTML; many "shipped" emails
                 # put the order number only in the HTML part, so we must check both.
                 order_ids = _extract_order_ids_from_text(subject, body_text, html_body)
                 if not order_ids:
-                    matched_order_ids = self._order_ids_for_subject_item(subject)
+                    matched_order_ids = self._order_ids_for_subject_item(
+                        subject,
+                        body_details.get("item_title"),
+                    )
                     if len(matched_order_ids) == 1:
                         order_ids = matched_order_ids
                         _LOGGER.debug(
@@ -728,10 +1057,19 @@ class AmazonOrdersCoordinator(DataUpdateCoordinator):
                 for order_id in order_ids:
                     # Only overwrite if we don't have this order or this email is newer than stored
                     existing = self._orders.get(order_id)
+                    if status is None and not existing:
+                        _LOGGER.debug(
+                            "Order %s: delivery update has no existing tracked order",
+                            order_id,
+                        )
+                        scan_stats["skipped_no_status"] += 1
+                        continue
+
+                    effective_status = status or existing.get("status")
                     if existing:
                         existing_status_rank = STATUS_RANKS.get(existing.get("status"), -1)
-                        new_status_rank = STATUS_RANKS.get(status, -1)
-                        if new_status_rank < existing_status_rank:
+                        new_status_rank = STATUS_RANKS.get(effective_status, -1)
+                        if status is not None and new_status_rank < existing_status_rank:
                             _LOGGER.debug(
                                 "Order %s: skipping status regression %s -> %s",
                                 order_id,
@@ -746,8 +1084,8 @@ class AmazonOrdersCoordinator(DataUpdateCoordinator):
                             )
                             if (
                                 new_status_rank == existing_status_rank
-                                and received_utc < existing_updated
-                            ):
+                                    and received_utc < existing_updated
+                                ):
                                 _LOGGER.debug(
                                     "Order %s: skipping older duplicate email",
                                     order_id,
@@ -759,7 +1097,9 @@ class AmazonOrdersCoordinator(DataUpdateCoordinator):
 
                     stored_subject = subject
                     stored_tracking_url = tracking_url
-                    item_title = _extract_item_title(subject)
+                    item_title = body_details.get("item_title") or _extract_item_title(
+                        subject
+                    )
                     if existing:
                         existing_subject = existing.get("subject", "")
                         existing_item_title = existing.get("item_title") or _extract_item_title(
@@ -775,18 +1115,33 @@ class AmazonOrdersCoordinator(DataUpdateCoordinator):
                         if stored_tracking_url is None:
                             stored_tracking_url = existing.get("tracking_url")
 
-                    event = _history_entry(status, subject, updated_ts, tracking_url)
-                    self._orders[order_id] = {
-                        "status": status,
+                    history = (existing or {}).get("history", [])
+                    if status is not None:
+                        event = _history_entry(status, subject, updated_ts, tracking_url)
+                        history = _append_history(existing, event)
+
+                    order_data = {
+                        **(existing or {}),
+                        "status": effective_status,
                         "subject": stored_subject,
                         "last_subject": subject,
                         "item_title": item_title,
                         "updated": updated_ts,
                         "tracking_url": stored_tracking_url,
-                        "history": _append_history(existing, event),
+                        "history": history,
                     }
+
+                    for field in ORDER_DETAIL_FIELDS:
+                        if field in body_details:
+                            order_data[field] = body_details[field]
+                    if self.expose_parser_debug and "parser_debug" in body_details:
+                        order_data["parser_debug"] = body_details["parser_debug"]
+                    elif not self.expose_parser_debug:
+                        order_data.pop("parser_debug", None)
+
+                    self._orders[order_id] = order_data
                     scan_stats["updated_count"] += 1
-                    _LOGGER.debug("Order %s -> %s", order_id, status)
+                    _LOGGER.debug("Order %s -> %s", order_id, effective_status)
 
                 if mark_as_read:
                     _LOGGER.debug("Marking email %s as read (order email processed)", num)
@@ -815,9 +1170,13 @@ class AmazonOrdersCoordinator(DataUpdateCoordinator):
                 return status
         return None
 
-    def _order_ids_for_subject_item(self, subject: str) -> list[str]:
-        """Find existing tracked orders with the same item title in the subject."""
-        item_key = _subject_item_key(subject)
+    def _order_ids_for_subject_item(
+        self,
+        subject: str,
+        body_item_title: str | None = None,
+    ) -> list[str]:
+        """Find existing tracked orders with the same item title."""
+        item_key = _normalize_item_key(body_item_title) or _subject_item_key(subject)
         if not item_key:
             return []
 

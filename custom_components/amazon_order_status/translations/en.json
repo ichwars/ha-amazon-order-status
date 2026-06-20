@@ -19,7 +19,19 @@
     "step": {
         "init": {
           "title": "Amazon Order Options",
-          "description": "Configure how Home Assistant tracks and processes Amazon order emails. delivered_retention_days controls how many days delivered orders are kept. update_interval controls how often HA checks for delivery updates. initial_scan_days controls how far back a first scan should look. require_amazon_sender filters non-Amazon senders. expose_* options control which order details are exposed as sensor attributes. imap_folder is optional and defaults to INBOX."
+          "description": "Configure how Home Assistant tracks and processes Amazon order emails. delivered_retention_days controls how many days delivered orders are kept. update_interval controls how often HA checks for delivery updates. initial_scan_days controls how far back a first scan should look. require_amazon_sender filters non-Amazon senders. expose_* options control which order details are exposed as sensor attributes. imap_folder is optional and defaults to INBOX.",
+          "data": {
+            "expose_delivery_details": "Expose delivery details",
+            "expose_carrier": "Expose carrier",
+            "expose_item_image": "Expose item image",
+            "expose_parser_debug": "Expose parser debug"
+          },
+          "data_description": {
+            "expose_delivery_details": "Expose body-derived delivery estimate, delivery window, delivered-at text, and item count.",
+            "expose_carrier": "Expose the detected shipping carrier when found in the email body.",
+            "expose_item_image": "Expose a trusted Amazon product image URL parsed from the email body.",
+            "expose_parser_debug": "Expose sanitized parser diagnostics. Raw email text, addresses, order IDs, and full links are not included."
+          }
         }
     }
   },

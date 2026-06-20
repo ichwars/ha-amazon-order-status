@@ -37,6 +37,11 @@ SENSORS: tuple[AmazonOrderSensorDescription, ...] = (
         name="Out for delivery",
         status="Out for delivery",
     ),
+    AmazonOrderSensorDescription(
+        key="delivery_attempted",
+        name="Delivery attempted",
+        status="Delivery attempted",
+    ),
     AmazonOrderSensorDescription(key="delivered", name="Delivered", status="Delivered"),
 )
 
@@ -113,41 +118,9 @@ class AmazonOrderStatusSensor(AmazonOrderBaseSensor):
             if data.get("status") != self.entity_description.status:
                 continue
 
-            order: dict[str, Any] = {
-                "status": data.get("status"),
-                "updated": data.get("updated"),
-            }
-            if self.coordinator.expose_item_title and self.coordinator.expose_order_id:
-                order["subject"] = data.get("subject")
-                order["last_subject"] = data.get(
-                    "last_subject",
-                    data.get("subject"),
-                )
-            if self.coordinator.expose_order_id:
-                order["order_id"] = data.get("order_id")
-            if self.coordinator.expose_item_title:
-                order["item_title"] = data.get("item_title")
-            if self.coordinator.expose_tracking_url:
-                order["tracking_url"] = data.get("tracking_url")
-            order["history"] = self._filtered_history(data.get("history", []))
-            orders.append(order)
+            orders.append(_build_exposed_order(self.coordinator, data))
 
         return orders
-
-    def _filtered_history(self, history: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        """Return history events respecting privacy options."""
-        filtered: list[dict[str, Any]] = []
-        for event in history:
-            item: dict[str, Any] = {
-                "status": event.get("status"),
-                "updated": event.get("updated"),
-            }
-            if self.coordinator.expose_item_title and self.coordinator.expose_order_id:
-                item["subject"] = event.get("subject")
-            if self.coordinator.expose_tracking_url:
-                item["tracking_url"] = event.get("tracking_url")
-            filtered.append(item)
-        return filtered
 
 
 class AmazonOrdersLastUpdatedSensor(AmazonOrderBaseSensor):
@@ -165,3 +138,60 @@ class AmazonOrdersLastUpdatedSensor(AmazonOrderBaseSensor):
     def extra_state_attributes(self) -> dict[str, Any]:
         """Return diagnostics for the most recent scan."""
         return dict(getattr(self.coordinator, "last_scan_stats", {}) or {})
+
+
+def _build_exposed_order(
+    coordinator: AmazonOrdersCoordinator,
+    data: dict[str, Any],
+) -> dict[str, Any]:
+    """Build one order attribute payload while respecting privacy options."""
+    order: dict[str, Any] = {
+        "status": data.get("status"),
+        "updated": data.get("updated"),
+    }
+    if coordinator.expose_item_title and coordinator.expose_order_id:
+        order["subject"] = data.get("subject")
+        order["last_subject"] = data.get("last_subject", data.get("subject"))
+    if coordinator.expose_order_id:
+        order["order_id"] = data.get("order_id")
+    if coordinator.expose_item_title:
+        order["item_title"] = data.get("item_title")
+    if coordinator.expose_tracking_url:
+        order["tracking_url"] = data.get("tracking_url")
+    if coordinator.expose_delivery_details:
+        for field in (
+            "delivery_estimate",
+            "delivery_window",
+            "delivered_at",
+            "item_count",
+        ):
+            if field in data:
+                order[field] = data.get(field)
+    if coordinator.expose_carrier and "carrier" in data:
+        order["carrier"] = data.get("carrier")
+    if coordinator.expose_item_image and "item_image_url" in data:
+        order["item_image_url"] = data.get("item_image_url")
+    if coordinator.expose_parser_debug and "parser_debug" in data:
+        order["parser_debug"] = data.get("parser_debug")
+
+    order["history"] = _filtered_history(coordinator, data.get("history", []))
+    return order
+
+
+def _filtered_history(
+    coordinator: AmazonOrdersCoordinator,
+    history: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Return history events respecting privacy options."""
+    filtered: list[dict[str, Any]] = []
+    for event in history:
+        item: dict[str, Any] = {
+            "status": event.get("status"),
+            "updated": event.get("updated"),
+        }
+        if coordinator.expose_item_title and coordinator.expose_order_id:
+            item["subject"] = event.get("subject")
+        if coordinator.expose_tracking_url:
+            item["tracking_url"] = event.get("tracking_url")
+        filtered.append(item)
+    return filtered

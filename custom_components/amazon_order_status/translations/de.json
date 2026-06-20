@@ -19,7 +19,19 @@
     "step": {
       "init": {
         "title": "Amazon-Order-Optionen",
-        "description": "Konfiguriere, wie Home Assistant Amazon-Bestellmails verarbeitet. delivered_retention_days steuert, wie lange zugestellte Bestellungen erhalten bleiben. update_interval steuert das Prüfintervall. initial_scan_days steuert den ersten Scan-Zeitraum. require_amazon_sender filtert Nicht-Amazon-Absender. expose_*-Optionen steuern, welche Bestelldetails als Sensorattribute sichtbar sind."
+        "description": "Konfiguriere, wie Home Assistant Amazon-Bestellmails verarbeitet. delivered_retention_days steuert, wie lange zugestellte Bestellungen erhalten bleiben. update_interval steuert das Prüfintervall. initial_scan_days steuert den ersten Scan-Zeitraum. require_amazon_sender filtert Nicht-Amazon-Absender. expose_*-Optionen steuern, welche Bestelldetails als Sensorattribute sichtbar sind.",
+        "data": {
+          "expose_delivery_details": "Lieferdetails anzeigen",
+          "expose_carrier": "Versanddienstleister anzeigen",
+          "expose_item_image": "Artikelbild anzeigen",
+          "expose_parser_debug": "Parser-Debug anzeigen"
+        },
+        "data_description": {
+          "expose_delivery_details": "Zeigt aus dem Mail-Inhalt erkannte Lieferprognose, Lieferfenster, Zustellzeitpunkt und Artikelanzahl an.",
+          "expose_carrier": "Zeigt den erkannten Versanddienstleister an, wenn er im Mail-Inhalt gefunden wird.",
+          "expose_item_image": "Zeigt eine geprüfte Amazon-Produktbild-URL aus dem Mail-Inhalt an.",
+          "expose_parser_debug": "Zeigt bereinigte Parser-Diagnosen an. Rohtext, Adressen, Bestellnummern und vollständige Links werden nicht ausgegeben."
+        }
       }
     }
   },
