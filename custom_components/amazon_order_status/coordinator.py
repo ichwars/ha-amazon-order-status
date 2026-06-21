@@ -600,6 +600,19 @@ def _new_scan_stats(folder: str, since: datetime, now: datetime) -> dict:
     }
 
 
+def _log_scan_without_order_status(scan_stats: dict, folder: str) -> None:
+    """Log a successful scan that found no order emails without alarming users."""
+    if (
+        scan_stats.get("email_count", 0) > 0
+        and scan_stats.get("recognized_count", 0) == 0
+    ):
+        _LOGGER.debug(
+            "Amazon Order Status scanned %d emails in %s but recognized no order status emails",
+            scan_stats["email_count"],
+            folder,
+        )
+
+
 LANGUAGE_PROFILES = {
     "en": {
         "Ordered": (
@@ -844,15 +857,7 @@ class AmazonOrdersCoordinator(DataUpdateCoordinator):
         self._purge_old_delivered_orders(scan_result.processed_until)
 
         await self.async_save_state(scan_result.processed_until)
-        if (
-            self.last_scan_stats.get("email_count", 0) > 0
-            and self.last_scan_stats.get("recognized_count", 0) == 0
-        ):
-            _LOGGER.warning(
-                "Amazon Order Status scanned %d emails in %s but recognized no order status emails",
-                self.last_scan_stats["email_count"],
-                self._imap_folder,
-            )
+        _log_scan_without_order_status(self.last_scan_stats, self._imap_folder)
 
         # Include order_id in each item so sensors and services can use it
         return self._current_data()

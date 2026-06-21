@@ -323,6 +323,33 @@ class ParserHelpersTest(unittest.TestCase):
         ):
             self.assertEqual(0, stats[key])
 
+    def test_scan_without_order_status_emails_logs_debug_not_warning(self):
+        calls = []
+
+        original_debug = coordinator._LOGGER.debug
+        original_warning = coordinator._LOGGER.warning
+
+        def fake_debug(message, *args):
+            calls.append(("debug", message % args))
+
+        def fake_warning(message, *args):
+            calls.append(("warning", message % args))
+
+        coordinator._LOGGER.debug = fake_debug
+        coordinator._LOGGER.warning = fake_warning
+        try:
+            coordinator._log_scan_without_order_status(
+                {"email_count": 4, "recognized_count": 0},
+                "INBOX",
+            )
+        finally:
+            coordinator._LOGGER.debug = original_debug
+            coordinator._LOGGER.warning = original_warning
+
+        self.assertEqual(1, len(calls))
+        self.assertEqual("debug", calls[0][0])
+        self.assertIn("recognized no order status emails", calls[0][1])
+
     def test_search_failure_returns_unsuccessful_scan_result(self):
         class SearchFailMail:
             def login(self, _email, _password):

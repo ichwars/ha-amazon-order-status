@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.4.10
+
+### Fixed
+
+- Successful scans that find new emails but no Amazon order status emails now log at debug level instead of warning level, avoiding noisy Home Assistant log entries during normal inbox activity.
+
 ## 1.4.9
 
 ### Changed
