@@ -898,7 +898,10 @@ class AmazonOrdersCoordinator(DataUpdateCoordinator):
         order["item_title"] = latest.get("item_title")
         order["tracking_url"] = latest.get("tracking_url")
         for field in ORDER_DETAIL_FIELDS:
+            if field == "item_count":
+                continue
             order[field] = latest.get(field)
+        order["item_count"] = sum(int(shipment.get("item_count") or 1) for shipment in shipments)
         order["shipment_count"] = len(shipments)
 
     def _find_shipment(

@@ -100,6 +100,30 @@ class CoordinatorStateTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual("Partially delivered", order["status"])
         self.assertEqual(2, len(order["shipments"]))
 
+    def test_upsert_keeps_top_level_item_count_aggregated_across_shipments(self):
+        fake = self._fake()
+
+        fake._upsert_order_event(
+            "123-4567890-1234567",
+            "Delivered",
+            "Zugestellt: First",
+            "2026-06-26T10:00:00+00:00",
+            None,
+            {"item_title": "First", "item_count": 2},
+        )
+        fake._upsert_order_event(
+            "123-4567890-1234567",
+            "Out for delivery",
+            "In Zustellung: Second",
+            "2026-06-26T11:00:00+00:00",
+            None,
+            {"item_title": "Second", "item_count": 3},
+        )
+
+        order = fake._orders["123-4567890-1234567"]
+        self.assertEqual(5, order["item_count"])
+        self.assertEqual(5, fake._current_data()[0]["item_count"])
+
     async def test_manual_mark_delivered_persists_and_updates_data(self):
         fake = self._fake()
         fake._upsert_order_event(
@@ -121,6 +145,86 @@ class CoordinatorStateTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(fake._orders["123-4567890-1234567"]["manual"])
         self.assertTrue(fake.saved)
         self.assertEqual("Delivered", fake.data[0]["status"])
+
+    async def test_async_set_status_without_shipment_id_updates_all_shipments(self):
+        fake = self._fake()
+        order_id = "123-4567890-1234567"
+        fake._upsert_order_event(
+            order_id,
+            "Shipped",
+            "Versendet: First",
+            "2026-06-26T10:00:00+00:00",
+            None,
+            {"item_title": "First", "item_count": 2},
+        )
+        fake._upsert_order_event(
+            order_id,
+            "Out for delivery",
+            "In Zustellung: Second",
+            "2026-06-26T11:00:00+00:00",
+            None,
+            {"item_title": "Second", "item_count": 3},
+        )
+
+        changed = await fake.async_set_status(order_id, "Delivered")
+
+        order = fake._orders[order_id]
+        self.assertTrue(changed)
+        self.assertEqual("Delivered", order["status"])
+        self.assertTrue(order["manual"])
+        self.assertEqual(5, order["item_count"])
+        self.assertTrue(all(shipment["manual"] for shipment in order["shipments"]))
+        self.assertEqual(
+            {"Delivered"},
+            {shipment["status"] for shipment in order["shipments"]},
+        )
+        self.assertEqual(5, fake.data[0]["item_count"])
+        self.assertTrue(fake.saved)
+
+    async def test_async_set_status_with_shipment_id_updates_only_target_shipment(self):
+        fake = self._fake()
+        order_id = "123-4567890-1234567"
+        fake._upsert_order_event(
+            order_id,
+            "Shipped",
+            "Versendet: First",
+            "2026-06-26T10:00:00+00:00",
+            None,
+            {"item_title": "First", "item_count": 2},
+        )
+        fake._upsert_order_event(
+            order_id,
+            "Shipped",
+            "Versendet: Second",
+            "2026-06-26T11:00:00+00:00",
+            None,
+            {"item_title": "Second", "item_count": 3},
+        )
+        first_shipment_id = fake._orders[order_id]["shipments"][0]["shipment_id"]
+
+        changed = await fake.async_set_status(
+            order_id,
+            "Delivered",
+            shipment_id=first_shipment_id,
+        )
+
+        order = fake._orders[order_id]
+        first_shipment = fake._find_shipment(order, first_shipment_id)
+        second_shipment = next(
+            shipment
+            for shipment in order["shipments"]
+            if shipment["shipment_id"] != first_shipment_id
+        )
+        self.assertTrue(changed)
+        self.assertEqual("Partially delivered", order["status"])
+        self.assertTrue(order["manual"])
+        self.assertEqual(5, order["item_count"])
+        self.assertEqual("Delivered", first_shipment["status"])
+        self.assertTrue(first_shipment["manual"])
+        self.assertEqual("Shipped", second_shipment["status"])
+        self.assertFalse(second_shipment["manual"])
+        self.assertEqual(5, fake.data[0]["item_count"])
+        self.assertTrue(fake.saved)
 
     async def test_ignore_and_restore_order(self):
         fake = self._fake()
