@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 import sys
@@ -147,6 +148,84 @@ class CoordinatorStateTest(unittest.IsolatedAsyncioTestCase):
         }
 
         self.assertEqual([], fake._current_data())
+
+    def test_lower_rank_email_enrichment_reports_status_regression_diagnostics(self):
+        fake = self._fake()
+        fake._upsert_order_event(
+            "123-4567890-1234567",
+            "Out for delivery",
+            "In Zustellung: Example",
+            "2026-06-26T12:00:00+00:00",
+            None,
+            {"item_title": "Example"},
+        )
+
+        outcome = fake._upsert_order_event_with_outcome(
+            "123-4567890-1234567",
+            "Shipped",
+            "Versendet: Example",
+            "2026-06-26T11:00:00+00:00",
+            None,
+            {"item_title": "Example", "carrier": "DHL"},
+        )
+        scan_stats = coordinator._new_scan_stats(
+            "INBOX",
+            datetime(2026, 6, 26, 10, 0, tzinfo=timezone.utc),
+            datetime(2026, 6, 26, 12, 0, tzinfo=timezone.utc),
+        )
+        coordinator._record_scan_outcome(scan_stats, outcome)
+
+        shipment = fake._orders["123-4567890-1234567"]["shipments"][0]
+        self.assertEqual("Out for delivery", shipment["status"])
+        self.assertEqual("2026-06-26T12:00:00+00:00", shipment["updated"])
+        self.assertEqual("DHL", shipment["carrier"])
+        self.assertTrue(outcome["changed"])
+        self.assertTrue(outcome["enriched"])
+        self.assertTrue(outcome["skipped_status_regression"])
+        self.assertFalse(outcome["skipped_older_duplicate"])
+        self.assertEqual(1, scan_stats["updated_count"])
+        self.assertEqual(1, scan_stats["enriched_count"])
+        self.assertEqual(1, scan_stats["skipped_status_regression"])
+        self.assertEqual(0, scan_stats["skipped_older_duplicate"])
+
+    def test_older_duplicate_email_enrichment_reports_duplicate_diagnostics(self):
+        fake = self._fake()
+        fake._upsert_order_event(
+            "123-4567890-1234567",
+            "Out for delivery",
+            "In Zustellung: Example",
+            "2026-06-26T12:00:00+00:00",
+            None,
+            {"item_title": "Example"},
+        )
+
+        outcome = fake._upsert_order_event_with_outcome(
+            "123-4567890-1234567",
+            "Out for delivery",
+            "In Zustellung: Example",
+            "2026-06-26T11:00:00+00:00",
+            None,
+            {"item_title": "Example", "delivery_estimate": "heute"},
+        )
+        scan_stats = coordinator._new_scan_stats(
+            "INBOX",
+            datetime(2026, 6, 26, 10, 0, tzinfo=timezone.utc),
+            datetime(2026, 6, 26, 12, 0, tzinfo=timezone.utc),
+        )
+        coordinator._record_scan_outcome(scan_stats, outcome)
+
+        shipment = fake._orders["123-4567890-1234567"]["shipments"][0]
+        self.assertEqual("Out for delivery", shipment["status"])
+        self.assertEqual("2026-06-26T12:00:00+00:00", shipment["updated"])
+        self.assertEqual("heute", shipment["delivery_estimate"])
+        self.assertTrue(outcome["changed"])
+        self.assertTrue(outcome["enriched"])
+        self.assertFalse(outcome["skipped_status_regression"])
+        self.assertTrue(outcome["skipped_older_duplicate"])
+        self.assertEqual(1, scan_stats["updated_count"])
+        self.assertEqual(1, scan_stats["enriched_count"])
+        self.assertEqual(0, scan_stats["skipped_status_regression"])
+        self.assertEqual(1, scan_stats["skipped_older_duplicate"])
 
 
 if __name__ == "__main__":

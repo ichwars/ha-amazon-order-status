@@ -623,6 +623,20 @@ def _new_scan_stats(folder: str, since: datetime, now: datetime) -> dict:
     }
 
 
+def _record_scan_outcome(scan_stats: dict[str, Any], outcome: dict[str, bool]) -> None:
+    """Fold one upsert outcome into scan diagnostics."""
+    if outcome.get("changed"):
+        scan_stats["updated_count"] += 1
+    if outcome.get("enriched"):
+        scan_stats["enriched_count"] += 1
+    if outcome.get("skipped_no_status"):
+        scan_stats["skipped_no_status"] += 1
+    if outcome.get("skipped_status_regression"):
+        scan_stats["skipped_status_regression"] += 1
+    if outcome.get("skipped_older_duplicate"):
+        scan_stats["skipped_older_duplicate"] += 1
+
+
 def _log_scan_without_order_status(scan_stats: dict, folder: str) -> None:
     """Log a successful scan that found no order emails without alarming users."""
     if (
@@ -908,9 +922,36 @@ class AmazonOrdersCoordinator(DataUpdateCoordinator):
         body_details: dict[str, Any],
     ) -> bool:
         """Insert or update one shipment-backed order event."""
+        return self._upsert_order_event_with_outcome(
+            order_id,
+            status,
+            subject,
+            updated_ts,
+            tracking_url,
+            body_details,
+        )["changed"]
+
+    def _upsert_order_event_with_outcome(
+        self,
+        order_id: str,
+        status: str | None,
+        subject: str,
+        updated_ts: str,
+        tracking_url: str | None,
+        body_details: dict[str, Any],
+    ) -> dict[str, bool]:
+        """Insert or update one shipment-backed order event and report diagnostics."""
+        outcome = {
+            "changed": False,
+            "enriched": False,
+            "skipped_no_status": False,
+            "skipped_status_regression": False,
+            "skipped_older_duplicate": False,
+        }
         existing_order = self._orders.get(order_id)
         if status is None and not existing_order:
-            return False
+            outcome["skipped_no_status"] = True
+            return outcome
 
         item_title = body_details.get("item_title") or _extract_item_title(subject)
         item_key = _normalize_item_key(item_title)
@@ -927,7 +968,8 @@ class AmazonOrdersCoordinator(DataUpdateCoordinator):
         fallback_status = existing_status or (existing_order or {}).get("status")
         effective_status = status or fallback_status
         if effective_status is None:
-            return False
+            outcome["skipped_no_status"] = True
+            return outcome
 
         allow_status_update = True
         if existing_status and status is not None:
@@ -936,6 +978,7 @@ class AmazonOrdersCoordinator(DataUpdateCoordinator):
             if new_rank < existing_rank:
                 effective_status = existing_status
                 allow_status_update = False
+                outcome["skipped_status_regression"] = True
             elif new_rank == existing_rank and existing_shipment:
                 try:
                     existing_updated = _to_utc(datetime.fromisoformat(existing_shipment["updated"]))
@@ -946,6 +989,7 @@ class AmazonOrdersCoordinator(DataUpdateCoordinator):
                     if incoming_updated < existing_updated:
                         effective_status = existing_status
                         allow_status_update = False
+                        outcome["skipped_older_duplicate"] = True
 
         merged_details = {}
         if existing_shipment:
@@ -967,6 +1011,12 @@ class AmazonOrdersCoordinator(DataUpdateCoordinator):
             merged_details,
         )
         shipment["shipment_id"] = shipment_id
+        detail_source = existing_shipment or existing_order
+        if detail_source:
+            outcome["enriched"] = any(
+                _has_value(shipment.get(field)) and not _has_value(detail_source.get(field))
+                for field in ("item_title", "tracking_url", *ORDER_DETAIL_FIELDS)
+            )
         if existing_shipment:
             shipment["manual"] = bool(existing_shipment.get("manual"))
             shipment["ignored"] = bool(existing_shipment.get("ignored"))
@@ -995,10 +1045,12 @@ class AmazonOrdersCoordinator(DataUpdateCoordinator):
 
         self._refresh_order_summary_fields(updated_order)
         if updated_order == existing_order:
-            return False
+            outcome["changed"] = False
+            return outcome
 
         self._orders[order_id] = updated_order
-        return True
+        outcome["changed"] = True
+        return outcome
 
     async def async_set_status(
         self,
@@ -1386,26 +1438,26 @@ class AmazonOrdersCoordinator(DataUpdateCoordinator):
 
                 updated_ts = (msg_datetime if msg_datetime is not None else received_utc).isoformat()
                 for order_id in order_ids:
-                    if self._upsert_order_event(
+                    outcome = self._upsert_order_event_with_outcome(
                         order_id,
                         status,
                         subject,
                         updated_ts,
                         tracking_url,
                         body_details,
-                    ):
-                        scan_stats["updated_count"] += 1
+                    )
+                    _record_scan_outcome(scan_stats, outcome)
+                    if outcome["changed"]:
                         _LOGGER.debug(
                             "Order %s -> %s",
                             order_id,
                             self._orders[order_id].get("status"),
                         )
-                    elif status is None and order_id not in self._orders:
+                    elif outcome["skipped_no_status"]:
                         _LOGGER.debug(
                             "Order %s: delivery update has no existing tracked order",
                             order_id,
                         )
-                        scan_stats["skipped_no_status"] += 1
 
                 if mark_as_read:
                     _LOGGER.debug("Marking email %s as read (order email processed)", num)
