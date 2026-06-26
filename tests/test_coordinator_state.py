@@ -384,6 +384,55 @@ class CoordinatorStateTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(0, scan_stats["skipped_status_regression"])
         self.assertEqual(1, scan_stats["skipped_older_duplicate"])
 
+    def test_statusless_older_delivery_update_keeps_newer_summary_and_duplicate_guard(self):
+        fake = self._fake()
+        order_id = "123-4567890-1234567"
+        fake._upsert_order_event(
+            order_id,
+            "Delivered",
+            "Zugestellt: First",
+            "2026-06-26T12:00:00+00:00",
+            None,
+            {"item_title": "First"},
+        )
+        fake._upsert_order_event(
+            order_id,
+            "Shipped",
+            "Versendet: Second",
+            "2026-06-26T13:00:00+00:00",
+            None,
+            {"item_title": "Second"},
+        )
+
+        outcome = fake._upsert_order_event_with_outcome(
+            order_id,
+            None,
+            "Lieferung aktualisiert: Second",
+            "2026-06-26T11:00:00+00:00",
+            None,
+            {"item_title": "Second", "carrier": "DHL"},
+        )
+        scan_stats = coordinator._new_scan_stats(
+            "INBOX",
+            datetime(2026, 6, 26, 10, 0, tzinfo=timezone.utc),
+            datetime(2026, 6, 26, 13, 0, tzinfo=timezone.utc),
+        )
+        coordinator._record_scan_outcome(scan_stats, outcome)
+
+        order = fake._orders[order_id]
+        second_shipment = fake._find_shipment(order, f"{order_id}:second")
+        self.assertEqual("2026-06-26T13:00:00+00:00", second_shipment["updated"])
+        self.assertEqual("2026-06-26T13:00:00+00:00", order["updated"])
+        self.assertEqual("Second", order["item_title"])
+        self.assertEqual("DHL", second_shipment["carrier"])
+        self.assertTrue(outcome["changed"])
+        self.assertTrue(outcome["enriched"])
+        self.assertTrue(outcome["skipped_older_duplicate"])
+        self.assertFalse(outcome["skipped_status_regression"])
+        self.assertEqual(1, scan_stats["updated_count"])
+        self.assertEqual(1, scan_stats["enriched_count"])
+        self.assertEqual(1, scan_stats["skipped_older_duplicate"])
+
 
 if __name__ == "__main__":
     unittest.main()

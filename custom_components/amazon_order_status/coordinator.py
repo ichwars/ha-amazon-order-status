@@ -977,14 +977,20 @@ class AmazonOrdersCoordinator(DataUpdateCoordinator):
             return outcome
 
         allow_status_update = True
-        if existing_status and status is not None:
-            existing_rank = STATUS_RANKS.get(existing_status, -1)
-            new_rank = STATUS_RANKS.get(status, -1)
-            if new_rank < existing_rank:
-                effective_status = existing_status
-                allow_status_update = False
-                outcome["skipped_status_regression"] = True
-            elif new_rank == existing_rank and existing_shipment:
+        if existing_status:
+            if status is not None:
+                existing_rank = STATUS_RANKS.get(existing_status, -1)
+                new_rank = STATUS_RANKS.get(status, -1)
+                if new_rank < existing_rank:
+                    effective_status = existing_status
+                    allow_status_update = False
+                    outcome["skipped_status_regression"] = True
+
+            if (
+                not outcome["skipped_status_regression"]
+                and effective_status == existing_status
+                and existing_shipment
+            ):
                 try:
                     existing_updated = _to_utc(datetime.fromisoformat(existing_shipment["updated"]))
                     incoming_updated = _to_utc(datetime.fromisoformat(updated_ts))
@@ -1008,7 +1014,7 @@ class AmazonOrdersCoordinator(DataUpdateCoordinator):
         shipment = build_shipment(
             order_id,
             effective_status,
-            updated_ts if allow_status_update or status is None else existing_shipment.get("updated", updated_ts),
+            updated_ts if allow_status_update else existing_shipment.get("updated", updated_ts),
             subject,
             item_key or (existing_shipment or {}).get("item_key"),
             item_title or (existing_shipment or {}).get("item_title"),
