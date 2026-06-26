@@ -165,11 +165,10 @@ def _build_exposed_order(
             "delivered_at",
             "item_count",
         ):
-            if field in data:
-                order[field] = data.get(field)
-    if coordinator.expose_carrier and "carrier" in data:
+            order[field] = data.get(field)
+    if coordinator.expose_carrier:
         order["carrier"] = data.get("carrier")
-    if coordinator.expose_item_image and "item_image_url" in data:
+    if coordinator.expose_item_image:
         order["item_image_url"] = data.get("item_image_url")
     if coordinator.expose_parser_debug and "parser_debug" in data:
         order["parser_debug"] = data.get("parser_debug")

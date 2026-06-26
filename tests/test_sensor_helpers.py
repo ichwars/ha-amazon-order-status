@@ -183,6 +183,37 @@ class SensorAttributeFilteringTest(unittest.TestCase):
         )
         self.assertEqual({"source": "body_details"}, order["parser_debug"])
 
+    def test_opted_in_optional_attributes_are_none_when_missing(self):
+        coordinator = SimpleNamespace(
+            expose_order_id=False,
+            expose_item_title=False,
+            expose_tracking_url=True,
+            expose_delivery_details=True,
+            expose_carrier=True,
+            expose_item_image=True,
+            expose_parser_debug=False,
+        )
+        data = {
+            "status": "Shipped",
+            "updated": "2026-06-19T13:33:08+00:00",
+            "history": [],
+        }
+
+        order = sensor._build_exposed_order(coordinator, data)
+
+        for field in (
+            "tracking_url",
+            "delivery_estimate",
+            "delivery_window",
+            "delivered_at",
+            "item_count",
+            "carrier",
+            "item_image_url",
+        ):
+            with self.subTest(field=field):
+                self.assertIn(field, order)
+                self.assertIsNone(order[field])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.4.11
+
+### Fixed
+
+- Optional exposed attributes such as `delivery_window`, `carrier`, and `item_image_url` now remain present with `null` values when Amazon did not provide them, preventing strict Home Assistant templates from failing on missing dict keys.
+
 ## 1.4.10
 
 ### Fixed

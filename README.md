@@ -99,6 +99,8 @@ Upon initial installation, this integration scans the previous ```initial_scan_d
 
 **Upgrade and Migration**
 
+Version ```1.4.11``` keeps optional exposed attributes present with empty values when Amazon did not provide them. This prevents strict Home Assistant dashboard templates from failing when they access optional fields such as ```delivery_window```.
+
 Version ```1.4.9``` adds grouped options, complete option descriptions, safer dashboard examples, and rescan enrichment for missing body-derived details such as item images. After updating through HACS or manually replacing the integration files, restart Home Assistant.
 
 Version ```1.4.8``` keeps existing tracked orders and can read the legacy global storage key automatically.
