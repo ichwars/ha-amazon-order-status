@@ -35,6 +35,19 @@ from .const import (
     CONF_MARK_AS_READ,
     CONF_REQUIRE_AMAZON_SENDER,
 )
+from .models import ORDER_DETAIL_FIELDS
+from .parser import (
+    STATUS_RANKS as PARSER_STATUS_RANKS,
+    extract_item_title as parser_extract_item_title,
+    extract_order_ids_from_text as parser_extract_order_ids_from_text,
+    is_delivery_update_subject as parser_is_delivery_update_subject,
+    message_from_amazon as parser_message_from_amazon,
+    normalize_item_key as parser_normalize_item_key,
+    parse_body_details as parser_parse_body_details,
+    safe_amazon_image_url as parser_safe_amazon_image_url,
+    safe_amazon_url as parser_safe_amazon_url,
+    status_from_subject as parser_status_from_subject,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -77,14 +90,6 @@ LAST_CHECK_KEY = "last_check"
 STORAGE_VERSION = 1
 STORAGE_KEY = "amazon_order_status"
 ORDERS_KEY = "orders"
-ORDER_DETAIL_FIELDS = (
-    "delivery_estimate",
-    "delivery_window",
-    "delivered_at",
-    "carrier",
-    "item_count",
-    "item_image_url",
-)
 
 ORDER_ID_REGEXES = (
     # Standard Amazon order IDs are distinctive enough to detect anywhere,
@@ -694,13 +699,16 @@ def _compile_status_patterns() -> tuple[tuple[str, re.Pattern[str], str], ...]:
 
 STATUS_PATTERNS = _compile_status_patterns()
 
-STATUS_RANKS = {
-    "Ordered": 0,
-    "Shipped": 1,
-    "Out for delivery": 2,
-    "Delivery attempted": 3,
-    "Delivered": 4,
-}
+STATUS_RANKS = dict(PARSER_STATUS_RANKS)
+
+_extract_order_ids_from_text = parser_extract_order_ids_from_text
+_message_from_amazon = parser_message_from_amazon
+_safe_amazon_url = parser_safe_amazon_url
+_safe_amazon_image_url = parser_safe_amazon_image_url
+_parse_body_details = parser_parse_body_details
+_is_delivery_update_subject = parser_is_delivery_update_subject
+_extract_item_title = parser_extract_item_title
+_normalize_item_key = parser_normalize_item_key
 
 
 def _select_folder(mail: imaplib.IMAP4, folder: str) -> None:
@@ -1049,6 +1057,7 @@ class AmazonOrdersCoordinator(DataUpdateCoordinator):
                     subject,
                     body_text,
                     html_body,
+                    received_at=received_utc,
                     include_debug=self.expose_parser_debug,
                 )
 
@@ -1235,10 +1244,7 @@ class AmazonOrdersCoordinator(DataUpdateCoordinator):
 
     def _status_from_subject(self, subject: str) -> str | None:
         """Determine order status from email subject."""
-        for _language, pattern, status in STATUS_PATTERNS:
-            if pattern.search(subject):
-                return status
-        return None
+        return parser_status_from_subject(subject)
 
     def _order_ids_for_subject_item(
         self,

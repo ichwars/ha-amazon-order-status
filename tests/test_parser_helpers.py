@@ -12,8 +12,8 @@ from types import SimpleNamespace
 import unittest
 
 
-def _load_coordinator_module():
-    """Load coordinator.py with minimal Home Assistant dependency stubs."""
+def _prepare_integration_package():
+    """Register the integration package and simple dependency stubs."""
     bs4 = types.ModuleType("bs4")
     bs4.BeautifulSoup = object
     sys.modules["bs4"] = bs4
@@ -49,19 +49,40 @@ def _load_coordinator_module():
     package.__path__ = [str(integration_dir)]
     sys.modules["amazon_order_status"] = package
 
-    for name in ("const", "coordinator"):
-        spec = importlib.util.spec_from_file_location(
-            f"amazon_order_status.{name}",
-            integration_dir / f"{name}.py",
-        )
-        module = importlib.util.module_from_spec(spec)
-        sys.modules[f"amazon_order_status.{name}"] = module
-        spec.loader.exec_module(module)
+    return integration_dir
+
+
+def _load_module(name: str, integration_dir: Path):
+    """Load one integration module by name."""
+    spec = importlib.util.spec_from_file_location(
+        f"amazon_order_status.{name}",
+        integration_dir / f"{name}.py",
+    )
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[f"amazon_order_status.{name}"] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def _load_coordinator_module():
+    """Load coordinator.py with minimal Home Assistant dependency stubs."""
+    integration_dir = _prepare_integration_package()
+
+    for name in ("const", "models", "parser", "coordinator"):
+        _load_module(name, integration_dir)
 
     return sys.modules["amazon_order_status.coordinator"]
 
 
+def _load_parser_module():
+    """Load parser.py and models.py without coordinator dependencies."""
+    integration_dir = _prepare_integration_package()
+    _load_module("models", integration_dir)
+    return _load_module("parser", integration_dir)
+
+
 coordinator = _load_coordinator_module()
+parser = _load_parser_module()
 
 
 class ParserHelpersTest(unittest.TestCase):
@@ -82,6 +103,30 @@ class ParserHelpersTest(unittest.TestCase):
                     subject.lower(),
                 )
                 self.assertEqual(expected, actual)
+
+    def test_new_status_subjects(self):
+        cases = {
+            "Abholbereit: Example ist in deiner Amazon Locker Abholstation": "Pickup ready",
+            "Lieferung ist verspätet: Example": "Delayed",
+            "Problem mit deiner Lieferung: Example": "Delivery problem",
+            "Unzustellbar: Example": "Undeliverable",
+            "Storniert: Deine Amazon-Bestellung": "Canceled",
+            "Rücksendung gestartet: Example": "Return started",
+            "Erstattung veranlasst: Example": "Refunded",
+            "Pickup available: Example is ready for pickup": "Pickup ready",
+            "Your package is running late": "Delayed",
+            "Action required for your delivery": "Delivery problem",
+            "Undeliverable package": "Undeliverable",
+            "Cancelled: your Amazon order": "Canceled",
+            "Return started for Example": "Return started",
+            "Refund issued for Example": "Refunded",
+        }
+        for subject, expected in cases.items():
+            with self.subTest(subject=subject):
+                self.assertEqual(
+                    expected,
+                    parser.status_from_subject(subject.lower()),
+                )
 
     def test_subject_item_matching_without_order_id(self):
         fake = coordinator.AmazonOrdersCoordinator.__new__(
@@ -110,7 +155,7 @@ class ParserHelpersTest(unittest.TestCase):
 
     def test_delivered_count_subject_is_not_treated_as_item_title(self):
         self.assertIsNone(
-            coordinator._extract_item_title(
+            parser.extract_item_title(
                 "Zugestellt: 1\u202fArtikel\u202f|\u202fBestellung\u202f#\u202f306-2300519-2315556"
             )
         )
@@ -145,18 +190,18 @@ class ParserHelpersTest(unittest.TestCase):
         phishing_msg = EmailMessage()
         phishing_msg["From"] = "Amazon.de <shipment-tracking@amazon.de.evil.test>"
 
-        self.assertTrue(coordinator._message_from_amazon(amazon_msg))
-        self.assertFalse(coordinator._message_from_amazon(phishing_msg))
+        self.assertTrue(parser.message_from_amazon(amazon_msg))
+        self.assertFalse(parser.message_from_amazon(phishing_msg))
 
     def test_safe_amazon_url_rejects_non_amazon_hosts(self):
         self.assertEqual(
             "https://www.amazon.de/gp/r.html?x=1",
-            coordinator._safe_amazon_url("https://www.amazon.de/gp/r.html?x=1"),
+            parser.safe_amazon_url("https://www.amazon.de/gp/r.html?x=1"),
         )
         self.assertIsNone(
-            coordinator._safe_amazon_url("https://www.amazon.de.evil.test/gp/r.html")
+            parser.safe_amazon_url("https://www.amazon.de.evil.test/gp/r.html")
         )
-        self.assertIsNone(coordinator._safe_amazon_url("http://www.amazon.de/gp/r.html"))
+        self.assertIsNone(parser.safe_amazon_url("http://www.amazon.de/gp/r.html"))
 
     def test_history_deduplicates_events(self):
         event = coordinator._history_entry(
@@ -222,7 +267,7 @@ class ParserHelpersTest(unittest.TestCase):
         )
 
     def test_body_details_extract_delivery_window_title_count_and_image(self):
-        details = coordinator._parse_body_details(
+        details = parser.parse_body_details(
             "Bestellt: Fitorb Smart Ring Pro - Das...",
             "Vielen Dank fuer deine Bestellung!\nZustellung: 24. Juni - 25. Juni\n1 Artikel",
             """
@@ -256,7 +301,7 @@ class ParserHelpersTest(unittest.TestCase):
         self.assertNotIn("306-2300519-2315556", str(details["parser_debug"]))
 
     def test_body_details_extract_delivery_attempt_and_delivery_window(self):
-        details = coordinator._parse_body_details(
+        details = parser.parse_body_details(
             "Zustellversuch: 2 SUNLU ASA Filament 1.75mm,...",
             "Deine Zustellung wurde versucht\nVersuchte Zustellung heute um 11:04",
             """
@@ -275,7 +320,7 @@ class ParserHelpersTest(unittest.TestCase):
         self.assertNotIn("parser_debug", details)
 
     def test_body_details_rejects_non_amazon_image_hosts(self):
-        details = coordinator._parse_body_details(
+        details = parser.parse_body_details(
             "Bestellt: Example",
             "Zustellung: morgen",
             '<img src="https://www.amazon.de.evil.test/image.jpg" width="122" alt="Example">',
@@ -297,7 +342,42 @@ class ParserHelpersTest(unittest.TestCase):
                 subject.lower(),
             )
         )
-        self.assertTrue(coordinator._is_delivery_update_subject(subject.lower()))
+        self.assertTrue(parser.is_delivery_update_subject(subject.lower()))
+
+    def test_structured_relative_delivery_dates(self):
+        received = datetime(2026, 6, 26, 10, 0, tzinfo=timezone.utc)
+
+        today = parser.parse_body_details(
+            "In Zustellung: Example",
+            "Ankunft heute 15h - 19h",
+            "",
+            received_at=received,
+        )
+        tomorrow = parser.parse_body_details(
+            "Versendet: Example",
+            "Arriving tomorrow 8:00 - 12:00",
+            "",
+            received_at=received,
+        )
+
+        self.assertEqual("2026-06-26", today["delivery_date_start"])
+        self.assertEqual("2026-06-26", today["delivery_date_end"])
+        self.assertEqual("15:00", today["delivery_window_start"])
+        self.assertEqual("19:00", today["delivery_window_end"])
+        self.assertEqual("2026-06-27", tomorrow["delivery_date_start"])
+        self.assertEqual("08:00", tomorrow["delivery_window_start"])
+
+    def test_structured_german_date_range(self):
+        details = parser.parse_body_details(
+            "Bestellt: Example",
+            "Zustellung: 24. Juni - 25. Juni",
+            "",
+            received_at=datetime(2026, 6, 20, tzinfo=timezone.utc),
+        )
+
+        self.assertEqual("24. Juni - 25. Juni", details["delivery_estimate"])
+        self.assertEqual("2026-06-24", details["delivery_date_start"])
+        self.assertEqual("2026-06-25", details["delivery_date_end"])
 
     def test_scan_stats_defaults_are_stable(self):
         since = datetime(2026, 6, 19, tzinfo=timezone.utc)
