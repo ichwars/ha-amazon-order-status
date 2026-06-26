@@ -33,6 +33,26 @@ models = _load_models_module()
 
 
 class ModelsTest(unittest.TestCase):
+    def test_shipment_id_normalizes_item_key(self):
+        self.assertEqual(
+            "123-4567890-1234567:my-cool-item",
+            models.shipment_id_for(
+                "123-4567890-1234567",
+                "  My Cool_Item!!  ",
+                None,
+            ),
+        )
+
+    def test_shipment_id_uses_default_without_item_key(self):
+        self.assertEqual(
+            "123-4567890-1234567:default",
+            models.shipment_id_for(
+                "123-4567890-1234567",
+                None,
+                "https://www.amazon.de/gp/your-account/ship-track/TRACKING12345",
+            ),
+        )
+
     def test_order_rollup_reports_partial_delivery(self):
         shipments = [
             {"status": "Delivered", "ignored": False},

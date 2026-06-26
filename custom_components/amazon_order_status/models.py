@@ -100,11 +100,12 @@ def _safe_tracking_url(tracking_url: str | None) -> str | None:
     return tracking_url
 
 
-def _tracking_suffix(tracking_url: str) -> str:
-    parsed = urlparse(tracking_url)
-    suffix = parsed.path.rstrip("/").split("/")[-1] or parsed.netloc
-    normalized = re.sub(r"[^a-z0-9]+", "-", suffix.lower()).strip("-")
-    return normalized or "tracking"
+def _normalize_item_key(item_key: str | None) -> str | None:
+    if item_key is None:
+        return None
+
+    normalized = re.sub(r"[^a-z0-9]+", "-", item_key.lower()).strip("-")
+    return normalized or None
 
 
 def _shipment_subject(shipment: dict[str, Any]) -> str | None:
@@ -166,12 +167,9 @@ def shipment_id_for(
     tracking_url: str | None,
 ) -> str:
     """Build a deterministic shipment identifier."""
-    if item_key:
-        return f"{order_id}:{item_key}"
-
-    safe_tracking_url = _safe_tracking_url(tracking_url)
-    if safe_tracking_url:
-        return f"{order_id}:{_tracking_suffix(safe_tracking_url)}"
+    normalized_item_key = _normalize_item_key(item_key)
+    if normalized_item_key:
+        return f"{order_id}:{normalized_item_key}"
 
     return f"{order_id}:default"
 
