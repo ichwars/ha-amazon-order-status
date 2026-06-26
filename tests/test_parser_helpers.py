@@ -81,14 +81,23 @@ def _load_parser_module():
     return _load_module("parser", integration_dir)
 
 
-coordinator = _load_coordinator_module()
 parser = _load_parser_module()
+_COORDINATOR = None
+
+
+def coordinator_module():
+    """Load coordinator.py only for tests that need it."""
+    global _COORDINATOR  # noqa: PLW0603
+    if _COORDINATOR is None:
+        _COORDINATOR = _load_coordinator_module()
+    return _COORDINATOR
 
 
 class ParserHelpersTest(unittest.TestCase):
     """German and English parser regression coverage."""
 
     def test_german_status_subjects(self):
+        coordinator = coordinator_module()
         cases = {
             "Bestellt: Fitorb Smart Ring Pro - Das...": "Ordered",
             "Versendet: Fitorb Smart Ring Pro - Das...": "Shipped",
@@ -129,6 +138,7 @@ class ParserHelpersTest(unittest.TestCase):
                 )
 
     def test_subject_item_matching_without_order_id(self):
+        coordinator = coordinator_module()
         fake = coordinator.AmazonOrdersCoordinator.__new__(
             coordinator.AmazonOrdersCoordinator
         )
@@ -161,6 +171,7 @@ class ParserHelpersTest(unittest.TestCase):
         )
 
     def test_subject_item_matching_skips_ambiguous_items(self):
+        coordinator = coordinator_module()
         fake = coordinator.AmazonOrdersCoordinator.__new__(
             coordinator.AmazonOrdersCoordinator
         )
@@ -204,6 +215,7 @@ class ParserHelpersTest(unittest.TestCase):
         self.assertIsNone(parser.safe_amazon_url("http://www.amazon.de/gp/r.html"))
 
     def test_history_deduplicates_events(self):
+        coordinator = coordinator_module()
         event = coordinator._history_entry(
             "Ordered",
             "Bestellt: Fitorb Smart Ring Pro - Das...",
@@ -217,6 +229,7 @@ class ParserHelpersTest(unittest.TestCase):
         self.assertEqual("Ordered", history[0]["status"])
 
     def test_status_ranking_prevents_regressions(self):
+        coordinator = coordinator_module()
         self.assertLess(
             coordinator.STATUS_RANKS["Ordered"],
             coordinator.STATUS_RANKS["Shipped"],
@@ -235,6 +248,7 @@ class ParserHelpersTest(unittest.TestCase):
         )
 
     def test_existing_order_can_be_enriched_from_older_email(self):
+        coordinator = coordinator_module()
         existing = {
             "status": "Delivered",
             "item_title": None,
@@ -331,6 +345,7 @@ class ParserHelpersTest(unittest.TestCase):
         self.assertEqual("morgen", details["delivery_estimate"])
 
     def test_delivery_update_subject_is_recognized_without_status_regression(self):
+        coordinator = coordinator_module()
         subject = (
             "Aktualisierung der voraussichtlichen Lieferung fuer deine "
             "Amazon.com-Bestellung mit der Nummer 306-9382035-6671562"
@@ -367,6 +382,30 @@ class ParserHelpersTest(unittest.TestCase):
         self.assertEqual("2026-06-27", tomorrow["delivery_date_start"])
         self.assertEqual("08:00", tomorrow["delivery_window_start"])
 
+    def test_delivery_delay_flag_refreshes_on_later_non_delayed_update(self):
+        received = datetime(2026, 6, 26, 10, 0, tzinfo=timezone.utc)
+
+        delayed = parser.parse_body_details(
+            "Lieferung ist verspätet: Example",
+            "Lieferung ist verspätet",
+            "",
+            received_at=received,
+        )
+        refreshed = parser.parse_body_details(
+            "In Zustellung: Example",
+            "Ankunft heute 15h - 19h",
+            "",
+            received_at=received,
+        )
+
+        self.assertTrue(delayed["delivery_is_delayed"])
+        self.assertEqual("verzögert", delayed["delivery_estimate"])
+        self.assertFalse(refreshed["delivery_is_delayed"])
+        self.assertEqual("2026-06-26", refreshed["delivery_date_start"])
+        self.assertEqual("2026-06-26", refreshed["delivery_date_end"])
+        self.assertEqual("15:00", refreshed["delivery_window_start"])
+        self.assertEqual("19:00", refreshed["delivery_window_end"])
+
     def test_structured_german_date_range(self):
         details = parser.parse_body_details(
             "Bestellt: Example",
@@ -380,6 +419,7 @@ class ParserHelpersTest(unittest.TestCase):
         self.assertEqual("2026-06-25", details["delivery_date_end"])
 
     def test_scan_stats_defaults_are_stable(self):
+        coordinator = coordinator_module()
         since = datetime(2026, 6, 19, tzinfo=timezone.utc)
         now = datetime(2026, 6, 20, tzinfo=timezone.utc)
 
@@ -404,6 +444,7 @@ class ParserHelpersTest(unittest.TestCase):
             self.assertEqual(0, stats[key])
 
     def test_scan_without_order_status_emails_logs_debug_not_warning(self):
+        coordinator = coordinator_module()
         calls = []
 
         original_debug = coordinator._LOGGER.debug
@@ -431,6 +472,7 @@ class ParserHelpersTest(unittest.TestCase):
         self.assertIn("recognized no order status emails", calls[0][1])
 
     def test_search_failure_returns_unsuccessful_scan_result(self):
+        coordinator = coordinator_module()
         class SearchFailMail:
             def login(self, _email, _password):
                 return "OK", []

@@ -608,6 +608,7 @@ def parse_body_details(
     combined_text = _combined_body_text(body_text, html_body)
     image_url, image_title, image_count = _extract_body_image_and_title(html_body)
     details: dict[str, Any] = {}
+    subject_status = status_from_subject(subject.lower())
 
     item_title = image_title or extract_item_title(subject)
     if item_title:
@@ -648,11 +649,21 @@ def parse_body_details(
     if carrier:
         details["carrier"] = carrier
 
-    if status_from_subject(subject.lower()) == "Delayed" or delivery_estimate in {
-        "verzögert",
-        "delayed",
-    }:
-        details["delivery_is_delayed"] = True
+    has_delivery_detail_context = any(
+        value is not None
+        for value in (
+            delivery_estimate,
+            delivery_window,
+            date_start,
+            date_end,
+            delivered_at,
+        )
+    ) or subject_status == "Delayed"
+    if has_delivery_detail_context:
+        details["delivery_is_delayed"] = subject_status == "Delayed" or delivery_estimate in {
+            "verzögert",
+            "delayed",
+        }
 
     if image_url:
         details["item_image_url"] = image_url
