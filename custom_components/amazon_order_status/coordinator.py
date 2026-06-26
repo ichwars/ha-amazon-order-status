@@ -6,6 +6,7 @@ import imaplib
 import logging
 import re
 import socket
+from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 from dataclasses import dataclass
 import email.utils
@@ -35,7 +36,15 @@ from .const import (
     CONF_MARK_AS_READ,
     CONF_REQUIRE_AMAZON_SENDER,
 )
-from .models import ORDER_DETAIL_FIELDS
+from .models import (
+    ORDER_DETAIL_FIELDS,
+    build_order,
+    build_shipment,
+    set_ignored,
+    set_manual_status,
+    shipment_id_for,
+    upsert_shipment,
+)
 from .parser import (
     STATUS_RANKS as PARSER_STATUS_RANKS,
     extract_item_title as parser_extract_item_title,
@@ -87,7 +96,7 @@ def _to_utc(dt: datetime) -> datetime:
         return dt.replace(tzinfo=timezone.utc)
     return dt.astimezone(timezone.utc)
 LAST_CHECK_KEY = "last_check"
-STORAGE_VERSION = 1
+STORAGE_VERSION = 2
 STORAGE_KEY = "amazon_order_status"
 ORDERS_KEY = "orders"
 
@@ -510,9 +519,18 @@ def _subject_item_key(subject: str) -> str | None:
 
 def _order_item_key(order: dict) -> str | None:
     """Return the best available normalized item key for a stored order."""
-    return _normalize_item_key(order.get("item_title")) or _subject_item_key(
-        order.get("subject", "")
-    )
+    if item_key := _normalize_item_key(order.get("item_title")):
+        return item_key
+
+    for shipment in order.get("shipments") or []:
+        if item_key := _normalize_item_key(shipment.get("item_title")):
+            return item_key
+
+    for item in order.get("items") or []:
+        if item_key := _normalize_item_key(item.get("item_title")):
+            return item_key
+
+    return _subject_item_key(order.get("subject", ""))
 
 
 def _history_entry(
@@ -829,6 +847,8 @@ class AmazonOrdersCoordinator(DataUpdateCoordinator):
                         order.get("tracking_url"),
                     )
                 ]
+            if order.get("shipments"):
+                self._refresh_order_summary_fields(order)
 
     async def async_save_state(self, last_check: datetime) -> None:
         await self._store.async_save(
@@ -840,7 +860,266 @@ class AmazonOrdersCoordinator(DataUpdateCoordinator):
 
     def _current_data(self) -> list[dict]:
         """Return coordinator data including order IDs."""
-        return [{**v, "order_id": k} for k, v in self._orders.items()]
+        data: list[dict] = []
+        for order_id, order in self._orders.items():
+            if not isinstance(order.get("shipments"), list):
+                continue
+            self._refresh_order_summary_fields(order)
+            data.append(
+                {
+                    **deepcopy(order),
+                    "order_id": order_id,
+                    "shipment_count": len(order.get("shipments", [])),
+                }
+            )
+        return data
+
+    def _refresh_order_summary_fields(self, order: dict[str, Any]) -> None:
+        """Keep top-level compatibility fields aligned with the latest shipment."""
+        shipments = order.get("shipments") or []
+        if not shipments:
+            return
+
+        latest = max(shipments, key=lambda shipment: shipment.get("updated", ""))
+        order["item_title"] = latest.get("item_title")
+        order["tracking_url"] = latest.get("tracking_url")
+        for field in ORDER_DETAIL_FIELDS:
+            order[field] = latest.get(field)
+        order["shipment_count"] = len(shipments)
+
+    def _find_shipment(
+        self,
+        order: dict[str, Any],
+        shipment_id: str,
+    ) -> dict[str, Any] | None:
+        """Return one stored shipment by identifier."""
+        for shipment in order.get("shipments", []):
+            if shipment.get("shipment_id") == shipment_id:
+                return shipment
+        return None
+
+    def _upsert_order_event(
+        self,
+        order_id: str,
+        status: str | None,
+        subject: str,
+        updated_ts: str,
+        tracking_url: str | None,
+        body_details: dict[str, Any],
+    ) -> bool:
+        """Insert or update one shipment-backed order event."""
+        existing_order = self._orders.get(order_id)
+        if status is None and not existing_order:
+            return False
+
+        item_title = body_details.get("item_title") or _extract_item_title(subject)
+        item_key = _normalize_item_key(item_title)
+        shipment_id = shipment_id_for(order_id, item_key, tracking_url)
+        existing_shipment = None
+        if existing_order and existing_order.get("shipments"):
+            existing_shipment = self._find_shipment(existing_order, shipment_id)
+            if existing_shipment is None and status is None and len(existing_order["shipments"]) == 1:
+                existing_shipment = existing_order["shipments"][0]
+                shipment_id = existing_shipment.get("shipment_id", shipment_id)
+                item_key = existing_shipment.get("item_key") or item_key
+
+        existing_status = existing_shipment.get("status") if existing_shipment else None
+        fallback_status = existing_status or (existing_order or {}).get("status")
+        effective_status = status or fallback_status
+        if effective_status is None:
+            return False
+
+        allow_status_update = True
+        if existing_status and status is not None:
+            existing_rank = STATUS_RANKS.get(existing_status, -1)
+            new_rank = STATUS_RANKS.get(status, -1)
+            if new_rank < existing_rank:
+                effective_status = existing_status
+                allow_status_update = False
+            elif new_rank == existing_rank and existing_shipment:
+                try:
+                    existing_updated = _to_utc(datetime.fromisoformat(existing_shipment["updated"]))
+                    incoming_updated = _to_utc(datetime.fromisoformat(updated_ts))
+                except (KeyError, TypeError, ValueError):
+                    pass
+                else:
+                    if incoming_updated < existing_updated:
+                        effective_status = existing_status
+                        allow_status_update = False
+
+        merged_details = {}
+        if existing_shipment:
+            for field in ORDER_DETAIL_FIELDS:
+                if field in existing_shipment:
+                    merged_details[field] = deepcopy(existing_shipment.get(field))
+        for field in ORDER_DETAIL_FIELDS:
+            if field in body_details:
+                merged_details[field] = deepcopy(body_details.get(field))
+
+        shipment = build_shipment(
+            order_id,
+            effective_status,
+            updated_ts if allow_status_update or status is None else existing_shipment.get("updated", updated_ts),
+            subject,
+            item_key or (existing_shipment or {}).get("item_key"),
+            item_title or (existing_shipment or {}).get("item_title"),
+            tracking_url or (existing_shipment or {}).get("tracking_url"),
+            merged_details,
+        )
+        shipment["shipment_id"] = shipment_id
+        if existing_shipment:
+            shipment["manual"] = bool(existing_shipment.get("manual"))
+            shipment["ignored"] = bool(existing_shipment.get("ignored"))
+            shipment["history"] = list(existing_shipment.get("history", []))
+            if status is not None and allow_status_update:
+                shipment["history"].append(
+                    _history_entry(
+                        effective_status,
+                        subject,
+                        updated_ts,
+                        shipment.get("tracking_url"),
+                    )
+                )
+                shipment["history"] = _append_history({"history": shipment["history"][:-1]}, shipment["history"][-1])
+
+        if existing_order and existing_order.get("shipments"):
+            updated_order = deepcopy(existing_order)
+            updated_order = upsert_shipment(updated_order, shipment)
+        else:
+            updated_order = build_order(order_id, shipment, subject, updated_ts)
+
+        if existing_order:
+            updated_order["ignored"] = bool(existing_order.get("ignored"))
+            if updated_order["ignored"]:
+                updated_order["status"] = "Ignored"
+
+        self._refresh_order_summary_fields(updated_order)
+        if updated_order == existing_order:
+            return False
+
+        self._orders[order_id] = updated_order
+        return True
+
+    async def async_set_status(
+        self,
+        order_id: str,
+        status: str,
+        shipment_id: str | None = None,
+    ) -> bool:
+        """Set a manual status on one order or shipment and persist it."""
+        order = self._orders.get(order_id)
+        if not order:
+            return False
+
+        updated = datetime.now(timezone.utc).isoformat()
+        changed = False
+        if shipment_id is None and order.get("shipments"):
+            for shipment in order.get("shipments", []):
+                changed = (
+                    set_manual_status(
+                        order,
+                        status,
+                        updated,
+                        shipment_id=shipment.get("shipment_id"),
+                    )
+                    or changed
+                )
+        else:
+            changed = set_manual_status(order, status, updated, shipment_id=shipment_id)
+
+        if not changed:
+            return False
+
+        self._refresh_order_summary_fields(order)
+        saved_at = self.last_check or datetime.now(timezone.utc)
+        await self.async_save_state(saved_at)
+        self.async_set_updated_data(self._current_data())
+        return True
+
+    async def async_mark_delivered(
+        self,
+        order_id: str,
+        shipment_id: str | None = None,
+        delivered_at: str | None = None,
+    ) -> bool:
+        """Mark one order or shipment as delivered manually."""
+        order = self._orders.get(order_id)
+        if not order:
+            return False
+
+        updated = datetime.now(timezone.utc).isoformat()
+        changed = False
+        if shipment_id is None and order.get("shipments"):
+            for shipment in order.get("shipments", []):
+                changed = (
+                    set_manual_status(
+                        order,
+                        "Delivered",
+                        updated,
+                        shipment_id=shipment.get("shipment_id"),
+                        delivered_at=delivered_at,
+                    )
+                    or changed
+                )
+        else:
+            changed = set_manual_status(
+                order,
+                "Delivered",
+                updated,
+                shipment_id=shipment_id,
+                delivered_at=delivered_at,
+            )
+
+        if not changed:
+            return False
+
+        self._refresh_order_summary_fields(order)
+        saved_at = self.last_check or datetime.now(timezone.utc)
+        await self.async_save_state(saved_at)
+        self.async_set_updated_data(self._current_data())
+        return True
+
+    async def async_ignore_order(
+        self,
+        order_id: str,
+        shipment_id: str | None = None,
+    ) -> bool:
+        """Ignore one order or shipment and persist the state."""
+        order = self._orders.get(order_id)
+        if not order:
+            return False
+
+        updated = datetime.now(timezone.utc).isoformat()
+        changed = set_ignored(order, True, updated, shipment_id=shipment_id)
+        if not changed:
+            return False
+
+        self._refresh_order_summary_fields(order)
+        saved_at = self.last_check or datetime.now(timezone.utc)
+        await self.async_save_state(saved_at)
+        self.async_set_updated_data(self._current_data())
+        return True
+
+    async def async_restore_order(
+        self,
+        order_id: str,
+        shipment_id: str | None = None,
+    ) -> bool:
+        """Restore one ignored order or shipment and persist the state."""
+        order = self._orders.get(order_id)
+        if not order:
+            return False
+
+        updated = datetime.now(timezone.utc).isoformat()
+        changed = set_ignored(order, False, updated, shipment_id=shipment_id)
+        if not changed:
+            return False
+
+        self._refresh_order_summary_fields(order)
+        saved_at = self.last_check or datetime.now(timezone.utc)
+        await self.async_save_state(saved_at)
+        self.async_set_updated_data(self._current_data())
+        return True
 
     async def _async_update_data(self):
         _LOGGER.debug("Coordinator update triggered at %s", datetime.now(timezone.utc))
@@ -1107,120 +1386,26 @@ class AmazonOrdersCoordinator(DataUpdateCoordinator):
 
                 updated_ts = (msg_datetime if msg_datetime is not None else received_utc).isoformat()
                 for order_id in order_ids:
-                    # Only overwrite if we don't have this order or this email is newer than stored
-                    existing = self._orders.get(order_id)
-                    if status is None and not existing:
+                    if self._upsert_order_event(
+                        order_id,
+                        status,
+                        subject,
+                        updated_ts,
+                        tracking_url,
+                        body_details,
+                    ):
+                        scan_stats["updated_count"] += 1
+                        _LOGGER.debug(
+                            "Order %s -> %s",
+                            order_id,
+                            self._orders[order_id].get("status"),
+                        )
+                    elif status is None and order_id not in self._orders:
                         _LOGGER.debug(
                             "Order %s: delivery update has no existing tracked order",
                             order_id,
                         )
                         scan_stats["skipped_no_status"] += 1
-                        continue
-
-                    effective_status = status or existing.get("status")
-                    item_title = body_details.get("item_title") or _extract_item_title(
-                        subject
-                    )
-                    if existing:
-                        existing_status_rank = STATUS_RANKS.get(existing.get("status"), -1)
-                        new_status_rank = STATUS_RANKS.get(effective_status, -1)
-                        if status is not None and new_status_rank < existing_status_rank:
-                            if _enrich_missing_order_details(
-                                existing,
-                                body_details,
-                                item_title=item_title,
-                                tracking_url=tracking_url,
-                                include_parser_debug=self.expose_parser_debug,
-                            ):
-                                scan_stats["enriched_count"] += 1
-                                scan_stats["updated_count"] += 1
-                                _LOGGER.debug(
-                                    "Order %s enriched from older %s email without status regression",
-                                    order_id,
-                                    status,
-                                )
-                            _LOGGER.debug(
-                                "Order %s: skipping status regression %s -> %s",
-                                order_id,
-                                existing.get("status"),
-                                status,
-                            )
-                            scan_stats["skipped_status_regression"] += 1
-                            continue
-                        try:
-                            existing_updated = _to_utc(
-                                datetime.fromisoformat(existing["updated"])
-                            )
-                            if (
-                                new_status_rank == existing_status_rank
-                                    and received_utc < existing_updated
-                                ):
-                                if _enrich_missing_order_details(
-                                    existing,
-                                    body_details,
-                                    item_title=item_title,
-                                    tracking_url=tracking_url,
-                                    include_parser_debug=self.expose_parser_debug,
-                                ):
-                                    scan_stats["enriched_count"] += 1
-                                    scan_stats["updated_count"] += 1
-                                    _LOGGER.debug(
-                                        "Order %s enriched from older duplicate email",
-                                        order_id,
-                                    )
-                                _LOGGER.debug(
-                                    "Order %s: skipping older duplicate email",
-                                    order_id,
-                                )
-                                scan_stats["skipped_older_duplicate"] += 1
-                                continue
-                        except (ValueError, TypeError):
-                            pass
-
-                    stored_subject = subject
-                    stored_tracking_url = tracking_url
-                    if existing:
-                        existing_subject = existing.get("subject", "")
-                        existing_item_title = existing.get("item_title") or _extract_item_title(
-                            existing_subject
-                        )
-                        if item_title is None:
-                            item_title = existing_item_title
-                        if (
-                            existing_item_title
-                            and not _subject_item_key(subject)
-                        ):
-                            stored_subject = existing_subject
-                        if stored_tracking_url is None:
-                            stored_tracking_url = existing.get("tracking_url")
-
-                    history = (existing or {}).get("history", [])
-                    if status is not None:
-                        event = _history_entry(status, subject, updated_ts, tracking_url)
-                        history = _append_history(existing, event)
-
-                    order_data = {
-                        **(existing or {}),
-                        "status": effective_status,
-                        "subject": stored_subject,
-                        "last_subject": subject,
-                        "item_title": item_title,
-                        "updated": updated_ts,
-                        "tracking_url": stored_tracking_url,
-                        "history": history,
-                    }
-
-                    for field in ORDER_DETAIL_FIELDS:
-                        if field in body_details:
-                            order_data[field] = body_details[field]
-                    if self.expose_parser_debug and "parser_debug" in body_details:
-                        order_data["parser_debug"] = body_details["parser_debug"]
-                    elif not self.expose_parser_debug:
-                        order_data.pop("parser_debug", None)
-
-                    self._orders[order_id] = order_data
-                    scan_stats["updated_count"] += 1
-                    _LOGGER.debug("Order %s -> %s", order_id, effective_status)
 
                 if mark_as_read:
                     _LOGGER.debug("Marking email %s as read (order email processed)", num)
