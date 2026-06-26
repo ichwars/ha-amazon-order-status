@@ -949,7 +949,9 @@ class AmazonOrdersCoordinator(DataUpdateCoordinator):
             "skipped_older_duplicate": False,
         }
         existing_order = self._orders.get(order_id)
-        if status is None and not existing_order:
+        existing_order_is_2_0 = isinstance((existing_order or {}).get("shipments"), list)
+        active_order = existing_order if existing_order_is_2_0 else None
+        if status is None and not active_order:
             outcome["skipped_no_status"] = True
             return outcome
 
@@ -957,15 +959,15 @@ class AmazonOrdersCoordinator(DataUpdateCoordinator):
         item_key = _normalize_item_key(item_title)
         shipment_id = shipment_id_for(order_id, item_key, tracking_url)
         existing_shipment = None
-        if existing_order and existing_order.get("shipments"):
-            existing_shipment = self._find_shipment(existing_order, shipment_id)
-            if existing_shipment is None and status is None and len(existing_order["shipments"]) == 1:
-                existing_shipment = existing_order["shipments"][0]
+        if active_order:
+            existing_shipment = self._find_shipment(active_order, shipment_id)
+            if existing_shipment is None and status is None and len(active_order["shipments"]) == 1:
+                existing_shipment = active_order["shipments"][0]
                 shipment_id = existing_shipment.get("shipment_id", shipment_id)
                 item_key = existing_shipment.get("item_key") or item_key
 
         existing_status = existing_shipment.get("status") if existing_shipment else None
-        fallback_status = existing_status or (existing_order or {}).get("status")
+        fallback_status = existing_status or (active_order or {}).get("status")
         effective_status = status or fallback_status
         if effective_status is None:
             outcome["skipped_no_status"] = True
@@ -1011,7 +1013,7 @@ class AmazonOrdersCoordinator(DataUpdateCoordinator):
             merged_details,
         )
         shipment["shipment_id"] = shipment_id
-        detail_source = existing_shipment or existing_order
+        detail_source = existing_shipment or active_order
         if detail_source:
             outcome["enriched"] = any(
                 _has_value(shipment.get(field)) and not _has_value(detail_source.get(field))
@@ -1032,14 +1034,14 @@ class AmazonOrdersCoordinator(DataUpdateCoordinator):
                 )
                 shipment["history"] = _append_history({"history": shipment["history"][:-1]}, shipment["history"][-1])
 
-        if existing_order and existing_order.get("shipments"):
-            updated_order = deepcopy(existing_order)
+        if active_order:
+            updated_order = deepcopy(active_order)
             updated_order = upsert_shipment(updated_order, shipment)
         else:
             updated_order = build_order(order_id, shipment, subject, updated_ts)
 
-        if existing_order:
-            updated_order["ignored"] = bool(existing_order.get("ignored"))
+        if active_order:
+            updated_order["ignored"] = bool(active_order.get("ignored"))
             if updated_order["ignored"]:
                 updated_order["status"] = "Ignored"
 

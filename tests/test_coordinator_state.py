@@ -149,6 +149,59 @@ class CoordinatorStateTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual([], fake._current_data())
 
+    def test_statusless_update_does_not_resurrect_hidden_legacy_order(self):
+        fake = self._fake()
+        fake._orders = {
+            "123-4567890-1234567": {
+                "status": "Delivered",
+                "updated": "2026-06-26T10:00:00+00:00",
+                "item_title": "Legacy Example",
+            }
+        }
+
+        outcome = fake._upsert_order_event_with_outcome(
+            "123-4567890-1234567",
+            None,
+            "Lieferung aktualisiert: Legacy Example",
+            "2026-06-26T11:00:00+00:00",
+            None,
+            {"item_title": "Legacy Example"},
+        )
+
+        self.assertEqual([], fake._current_data())
+        self.assertNotIn("shipments", fake._orders["123-4567890-1234567"])
+        self.assertFalse(outcome["changed"])
+        self.assertFalse(outcome["enriched"])
+        self.assertTrue(outcome["skipped_no_status"])
+
+    def test_status_update_can_rebuild_hidden_legacy_order_as_2_0(self):
+        fake = self._fake()
+        fake._orders = {
+            "123-4567890-1234567": {
+                "status": "Delivered",
+                "updated": "2026-06-26T10:00:00+00:00",
+                "item_title": "Legacy Example",
+            }
+        }
+
+        outcome = fake._upsert_order_event_with_outcome(
+            "123-4567890-1234567",
+            "Shipped",
+            "Versendet: Legacy Example",
+            "2026-06-26T11:00:00+00:00",
+            None,
+            {"item_title": "Legacy Example"},
+        )
+
+        current_data = fake._current_data()
+
+        self.assertTrue(outcome["changed"])
+        self.assertFalse(outcome["skipped_no_status"])
+        self.assertEqual("Shipped", fake._orders["123-4567890-1234567"]["status"])
+        self.assertEqual(1, len(fake._orders["123-4567890-1234567"]["shipments"]))
+        self.assertEqual("Shipped", current_data[0]["status"])
+        self.assertEqual(1, current_data[0]["shipment_count"])
+
     def test_lower_rank_email_enrichment_reports_status_regression_diagnostics(self):
         fake = self._fake()
         fake._upsert_order_event(
