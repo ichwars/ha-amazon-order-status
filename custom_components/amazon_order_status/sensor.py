@@ -20,6 +20,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN
 from .coordinator import AmazonOrdersCoordinator
+from .models import STATUS_SENSOR_DEFINITIONS
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -29,20 +30,9 @@ class AmazonOrderSensorDescription(SensorEntityDescription):
     status: str | None = None
 
 
-SENSORS: tuple[AmazonOrderSensorDescription, ...] = (
-    AmazonOrderSensorDescription(key="ordered", name="Ordered", status="Ordered"),
-    AmazonOrderSensorDescription(key="shipped", name="Shipped", status="Shipped"),
-    AmazonOrderSensorDescription(
-        key="out_for_delivery",
-        name="Out for delivery",
-        status="Out for delivery",
-    ),
-    AmazonOrderSensorDescription(
-        key="delivery_attempted",
-        name="Delivery attempted",
-        status="Delivery attempted",
-    ),
-    AmazonOrderSensorDescription(key="delivered", name="Delivered", status="Delivered"),
+SENSORS: tuple[AmazonOrderSensorDescription, ...] = tuple(
+    AmazonOrderSensorDescription(key=key, name=name, status=status)
+    for key, name, status in STATUS_SENSOR_DEFINITIONS
 )
 
 LAST_UPDATED_SENSOR = AmazonOrderSensorDescription(
@@ -145,9 +135,14 @@ def _build_exposed_order(
     data: dict[str, Any],
 ) -> dict[str, Any]:
     """Build one order attribute payload while respecting privacy options."""
+    shipments = data.get("shipments", [])
     order: dict[str, Any] = {
         "status": data.get("status"),
         "updated": data.get("updated"),
+        "shipment_count": data.get("shipment_count", len(shipments)),
+        "shipments": _filtered_shipments(coordinator, shipments),
+        "manual": bool(data.get("manual")),
+        "ignored": bool(data.get("ignored")),
     }
     if coordinator.expose_item_title and coordinator.expose_order_id:
         order["subject"] = data.get("subject")
@@ -175,6 +170,48 @@ def _build_exposed_order(
 
     order["history"] = _filtered_history(coordinator, data.get("history", []))
     return order
+
+
+def _filtered_shipments(
+    coordinator: AmazonOrdersCoordinator,
+    shipments: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Return shipment payloads respecting privacy options."""
+    filtered: list[dict[str, Any]] = []
+    for shipment in shipments:
+        item: dict[str, Any] = {
+            "shipment_id": shipment.get("shipment_id"),
+            "status": shipment.get("status"),
+            "updated": shipment.get("updated"),
+            "history": _filtered_history(coordinator, shipment.get("history", [])),
+            "manual": bool(shipment.get("manual")),
+            "ignored": bool(shipment.get("ignored")),
+        }
+        if coordinator.expose_item_title:
+            item["item_title"] = shipment.get("item_title")
+        if coordinator.expose_tracking_url:
+            item["tracking_url"] = shipment.get("tracking_url")
+        if coordinator.expose_delivery_details:
+            for field in (
+                "delivery_estimate",
+                "delivery_date_start",
+                "delivery_date_end",
+                "delivery_window",
+                "delivery_window_start",
+                "delivery_window_end",
+                "delivered_at",
+                "delivery_is_delayed",
+                "item_count",
+            ):
+                item[field] = shipment.get(field)
+        if coordinator.expose_carrier:
+            item["carrier"] = shipment.get("carrier")
+        if coordinator.expose_item_image:
+            item["item_image_url"] = shipment.get("item_image_url")
+        if coordinator.expose_parser_debug and "parser_debug" in shipment:
+            item["parser_debug"] = shipment.get("parser_debug")
+        filtered.append(item)
+    return filtered
 
 
 def _filtered_history(

@@ -73,7 +73,7 @@ def _load_sensor_module():
     package.__path__ = [str(integration_dir)]
     sys.modules["amazon_order_status"] = package
 
-    for name in ("const", "coordinator", "sensor"):
+    for name in ("const", "coordinator", "models", "sensor"):
         if name == "coordinator":
             module = types.ModuleType("amazon_order_status.coordinator")
             module.AmazonOrdersCoordinator = object
@@ -96,6 +96,31 @@ sensor = _load_sensor_module()
 
 class SensorAttributeFilteringTest(unittest.TestCase):
     """Sensor attribute privacy coverage."""
+
+    def test_status_sensors_follow_model_definitions(self):
+        definitions = sys.modules[
+            "amazon_order_status.models"
+        ].STATUS_SENSOR_DEFINITIONS
+
+        self.assertIn(
+            ("partially_delivered", "Partially delivered", "Partially delivered"),
+            definitions,
+        )
+        self.assertIn(
+            ("ignored", "Ignored", "Ignored"),
+            definitions,
+        )
+        self.assertEqual(
+            list(definitions),
+            [
+                (
+                    description.key,
+                    description.name,
+                    description.status,
+                )
+                for description in sensor.SENSORS
+            ],
+        )
 
     def test_sensitive_body_details_are_hidden_without_opt_in(self):
         coordinator = SimpleNamespace(
@@ -134,13 +159,129 @@ class SensorAttributeFilteringTest(unittest.TestCase):
         order = sensor._build_exposed_order(coordinator, data)
 
         self.assertEqual(
-            {"status", "updated", "history"},
+            {
+                "status",
+                "updated",
+                "shipment_count",
+                "shipments",
+                "history",
+                "manual",
+                "ignored",
+            },
             set(order),
         )
         self.assertEqual(
             {"status", "updated"},
             set(order["history"][0]),
         )
+        self.assertEqual([], order["shipments"])
+
+    def test_nested_shipments_respect_privacy_options(self):
+        coordinator = SimpleNamespace(
+            expose_order_id=False,
+            expose_item_title=False,
+            expose_tracking_url=False,
+            expose_delivery_details=False,
+            expose_carrier=False,
+            expose_item_image=False,
+            expose_parser_debug=False,
+        )
+        data = {
+            "order_id": "123-4567890-1234567",
+            "status": "Partially delivered",
+            "updated": "2026-06-26T12:00:00+00:00",
+            "shipments": [
+                {
+                    "shipment_id": "123-4567890-1234567:first",
+                    "status": "Delivered",
+                    "item_title": "Private title",
+                    "tracking_url": "https://www.amazon.de/gp/your-account/ship-track/example",
+                    "carrier": "DHL",
+                    "delivery_estimate": "heute",
+                    "delivery_date_start": "2026-06-26",
+                    "delivery_date_end": "2026-06-26",
+                    "delivery_window_start": "15:00",
+                    "delivery_window_end": "19:00",
+                    "item_image_url": "https://m.media-amazon.com/images/I/example.jpg",
+                    "updated": "2026-06-26T12:00:00+00:00",
+                    "history": [],
+                    "manual": False,
+                    "ignored": False,
+                }
+            ],
+            "history": [],
+            "manual": False,
+            "ignored": False,
+        }
+
+        order = sensor._build_exposed_order(coordinator, data)
+
+        self.assertEqual(
+            {
+                "status",
+                "updated",
+                "shipment_count",
+                "shipments",
+                "history",
+                "manual",
+                "ignored",
+            },
+            set(order),
+        )
+        self.assertEqual(
+            {"shipment_id", "status", "updated", "history", "manual", "ignored"},
+            set(order["shipments"][0]),
+        )
+
+    def test_nested_shipments_expose_opted_in_details(self):
+        coordinator = SimpleNamespace(
+            expose_order_id=True,
+            expose_item_title=True,
+            expose_tracking_url=True,
+            expose_delivery_details=True,
+            expose_carrier=True,
+            expose_item_image=True,
+            expose_parser_debug=False,
+        )
+        data = {
+            "order_id": "123-4567890-1234567",
+            "status": "Delayed",
+            "subject": "Lieferung ist verspätet: Example",
+            "last_subject": "Lieferung ist verspätet: Example",
+            "updated": "2026-06-26T12:00:00+00:00",
+            "shipments": [
+                {
+                    "shipment_id": "123-4567890-1234567:example",
+                    "status": "Delayed",
+                    "item_title": "Example",
+                    "tracking_url": "https://www.amazon.de/gp/your-account/ship-track/example",
+                    "carrier": "DHL",
+                    "delivery_estimate": "verzögert",
+                    "delivery_date_start": None,
+                    "delivery_date_end": None,
+                    "delivery_window": None,
+                    "delivery_window_start": None,
+                    "delivery_window_end": None,
+                    "delivery_is_delayed": True,
+                    "item_count": 1,
+                    "item_image_url": None,
+                    "updated": "2026-06-26T12:00:00+00:00",
+                    "history": [],
+                    "manual": False,
+                    "ignored": False,
+                }
+            ],
+            "history": [],
+            "manual": False,
+            "ignored": False,
+        }
+
+        order = sensor._build_exposed_order(coordinator, data)
+
+        self.assertEqual("123-4567890-1234567", order["order_id"])
+        self.assertEqual("Example", order["shipments"][0]["item_title"])
+        self.assertTrue(order["shipments"][0]["delivery_is_delayed"])
+        self.assertIsNone(order["shipments"][0]["delivery_date_start"])
 
     def test_sensitive_body_details_are_visible_with_opt_in(self):
         coordinator = SimpleNamespace(
