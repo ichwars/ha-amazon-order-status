@@ -30,7 +30,7 @@ from .const import (
     SERVICE_SET_STATUS,
 )
 from .coordinator import AmazonOrdersCoordinator
-from .models import ORDER_STATUSES
+from .models import ORDER_STATUSES, SHIPMENT_STATUSES
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -227,6 +227,10 @@ async def _handle_set_status(hass: HomeAssistant, call: ServiceCall) -> None:
     order_id = _normalized_required_string(call.data[ATTR_ORDER_ID], ATTR_ORDER_ID)
     shipment_id = _normalized_optional_string(call.data.get(ATTR_SHIPMENT_ID))
     status = call.data[ATTR_STATUS]
+    if shipment_id is not None and status not in SHIPMENT_STATUSES:
+        raise ServiceValidationError(
+            f"{status} is an order rollup status and cannot be applied to one shipment"
+        )
 
     matched = False
     for coordinator in _loaded_coordinators(

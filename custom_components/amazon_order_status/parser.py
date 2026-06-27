@@ -552,9 +552,15 @@ def _date_with_year(month: int, day: int, received_at: datetime | None) -> str |
         return None
     year = received_at.year
     try:
-        return datetime(year, month, day, tzinfo=received_at.tzinfo).date().isoformat()
+        candidate = datetime(year, month, day, tzinfo=received_at.tzinfo).date()
     except ValueError:
         return None
+    if received_at.date() - candidate > timedelta(days=180):
+        try:
+            candidate = datetime(year + 1, month, day, tzinfo=received_at.tzinfo).date()
+        except ValueError:
+            return None
+    return candidate.isoformat()
 
 
 def _extract_structured_delivery_dates(

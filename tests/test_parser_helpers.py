@@ -418,6 +418,18 @@ class ParserHelpersTest(unittest.TestCase):
         self.assertEqual("2026-06-24", details["delivery_date_start"])
         self.assertEqual("2026-06-25", details["delivery_date_end"])
 
+    def test_structured_date_rolls_to_next_year_after_new_year(self):
+        details = parser.parse_body_details(
+            "Bestellt: Example",
+            "Zustellung: 2. Januar",
+            "",
+            received_at=datetime(2026, 12, 31, 23, 0, tzinfo=timezone.utc),
+        )
+
+        self.assertEqual("2. Januar", details["delivery_estimate"])
+        self.assertEqual("2027-01-02", details["delivery_date_start"])
+        self.assertEqual("2027-01-02", details["delivery_date_end"])
+
     def test_scan_stats_defaults_are_stable(self):
         coordinator = coordinator_module()
         since = datetime(2026, 6, 19, tzinfo=timezone.utc)

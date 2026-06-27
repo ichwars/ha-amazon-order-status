@@ -176,6 +176,61 @@ class SensorAttributeFilteringTest(unittest.TestCase):
         )
         self.assertEqual([], order["shipments"])
 
+    def test_status_sensor_attributes_include_total_shipment_count(self):
+        coordinator = SimpleNamespace(
+            entry=SimpleNamespace(entry_id="entry-1"),
+            data=[
+                {
+                    "order_id": "123-4567890-1234567",
+                    "status": "Shipped",
+                    "updated": "2026-06-26T10:00:00+00:00",
+                    "shipment_count": 2,
+                    "shipments": [{}, {}],
+                    "history": [],
+                    "manual": False,
+                    "ignored": False,
+                },
+                {
+                    "order_id": "123-4567890-7654321",
+                    "status": "Shipped",
+                    "updated": "2026-06-26T11:00:00+00:00",
+                    "shipment_count": 1,
+                    "shipments": [{}],
+                    "history": [],
+                    "manual": False,
+                    "ignored": False,
+                },
+                {
+                    "order_id": "123-4567890-0000000",
+                    "status": "Delivered",
+                    "updated": "2026-06-26T12:00:00+00:00",
+                    "shipment_count": 4,
+                    "shipments": [{}, {}, {}, {}],
+                    "history": [],
+                    "manual": False,
+                    "ignored": False,
+                },
+            ],
+            expose_order_id=False,
+            expose_item_title=False,
+            expose_tracking_url=False,
+            expose_delivery_details=False,
+            expose_carrier=False,
+            expose_item_image=False,
+            expose_parser_debug=False,
+        )
+        description = sensor.AmazonOrderSensorDescription(
+            key="shipped",
+            name="Shipped",
+            status="Shipped",
+        )
+        status_sensor = sensor.AmazonOrderStatusSensor(coordinator, description)
+
+        attributes = status_sensor.extra_state_attributes
+
+        self.assertEqual(2, attributes["order_count"])
+        self.assertEqual(3, attributes["shipment_count"])
+
     def test_nested_shipments_respect_privacy_options(self):
         coordinator = SimpleNamespace(
             expose_order_id=False,

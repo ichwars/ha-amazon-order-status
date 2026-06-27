@@ -75,17 +75,23 @@ data:
 
 Each status sensor exposes an `orders` attribute. In 2.0, every order can contain nested `shipments`, so dashboards should read both levels defensively with `.get(...)`.
 
-Common status sensors include:
+2.0 status sensors:
 
 - `sensor.amazon_orders_ordered`
 - `sensor.amazon_orders_shipped`
 - `sensor.amazon_orders_out_for_delivery`
 - `sensor.amazon_orders_delivery_attempted`
+- `sensor.amazon_orders_pickup_ready`
+- `sensor.amazon_orders_delayed`
+- `sensor.amazon_orders_delivery_problem`
+- `sensor.amazon_orders_undeliverable`
 - `sensor.amazon_orders_partially_delivered`
 - `sensor.amazon_orders_delivered`
+- `sensor.amazon_orders_canceled`
+- `sensor.amazon_orders_return_started`
+- `sensor.amazon_orders_refunded`
+- `sensor.amazon_orders_ignored`
 - `sensor.amazon_orders_last_updated`
-
-Depending on order history, the integration can also surface delayed, pickup ready, delivery problem, undeliverable, canceled, return started, refunded, and ignored states.
 
 At the order level, attributes can include:
 
@@ -101,20 +107,33 @@ At the shipment level, attributes can include:
 
 ## Dashboard
 
-This example is German-first and uses only safe `o.get(...)` and `s.get(...)` access. It renders each order and then its nested `shipments`.
+This compact example is German-first, covers all 2.0 status sensors, and uses only safe `o.get(...)` and `s.get(...)` access for order and shipment payloads.
 
 ```yaml
-type: vertical-stack
-cards:
-  - type: conditional
-    conditions:
-      - entity: sensor.amazon_orders_shipped
-        state_not: "0"
-    card:
-      type: markdown
-      title: Amazon Bestellungen - Versandt
-      content: >
-        {% for o in state_attr('sensor.amazon_orders_shipped', 'orders') or [] %}
+type: markdown
+title: Amazon Bestellungen
+content: >
+  {% set status_sensoren = [
+    {'entity': 'sensor.amazon_orders_ordered', 'status': 'Ordered', 'titel': 'Bestellt'},
+    {'entity': 'sensor.amazon_orders_shipped', 'status': 'Shipped', 'titel': 'Versandt'},
+    {'entity': 'sensor.amazon_orders_out_for_delivery', 'status': 'Out for delivery', 'titel': 'In Zustellung'},
+    {'entity': 'sensor.amazon_orders_delivery_attempted', 'status': 'Delivery attempted', 'titel': 'Zustellversuch'},
+    {'entity': 'sensor.amazon_orders_pickup_ready', 'status': 'Pickup ready', 'titel': 'Abholbereit'},
+    {'entity': 'sensor.amazon_orders_delayed', 'status': 'Delayed', 'titel': 'Verzoegert'},
+    {'entity': 'sensor.amazon_orders_delivery_problem', 'status': 'Delivery problem', 'titel': 'Lieferproblem'},
+    {'entity': 'sensor.amazon_orders_undeliverable', 'status': 'Undeliverable', 'titel': 'Unzustellbar'},
+    {'entity': 'sensor.amazon_orders_partially_delivered', 'status': 'Partially delivered', 'titel': 'Teilweise zugestellt'},
+    {'entity': 'sensor.amazon_orders_delivered', 'status': 'Delivered', 'titel': 'Zugestellt'},
+    {'entity': 'sensor.amazon_orders_canceled', 'status': 'Canceled', 'titel': 'Storniert'},
+    {'entity': 'sensor.amazon_orders_return_started', 'status': 'Return started', 'titel': 'Ruecksendung gestartet'},
+    {'entity': 'sensor.amazon_orders_refunded', 'status': 'Refunded', 'titel': 'Erstattet'},
+    {'entity': 'sensor.amazon_orders_ignored', 'status': 'Ignored', 'titel': 'Ignoriert'}
+  ] %}
+  {% for cfg in status_sensoren %}
+    {% set orders = state_attr(cfg.get('entity'), 'orders') or [] %}
+    {% if orders %}
+      ## {{ cfg.get('titel') }} ({{ cfg.get('status') }})
+      {% for o in orders %}
         {% set titel = o.get('item_title') or o.get('subject') or o.get('order_id') or 'Amazon Bestellung' %}
         **{{ titel }}**
 
@@ -126,30 +145,12 @@ cards:
         - Sendung: {{ s.get('item_title') or s.get('shipment_id') or 'Amazon Sendung' }}
           {% if s.get('status') %}({{ s.get('status') }}){% endif %}
           {% if s.get('delivery_window') %}- Zeitfenster: {{ s.get('delivery_window') }}{% endif %}
+          {% if s.get('delivered_at') %}- Zugestellt: {{ s.get('delivered_at') }}{% endif %}
           {% if s.get('tracking_url') %}- [Tracking]({{ s.get('tracking_url') }}){% endif %}
         {% endfor %}
-
-        {% endfor %}
-  - type: conditional
-    conditions:
-      - entity: sensor.amazon_orders_partially_delivered
-        state_not: "0"
-    card:
-      type: markdown
-      title: Amazon Bestellungen - Teilweise zugestellt
-      content: >
-        {% for o in state_attr('sensor.amazon_orders_partially_delivered', 'orders') or [] %}
-        {% set titel = o.get('item_title') or o.get('subject') or o.get('order_id') or 'Amazon Bestellung' %}
-        **{{ titel }}**
-
-        {% for s in o.get('shipments') or [] %}
-        - {{ s.get('item_title') or s.get('shipment_id') or 'Sendung' }}
-          {% if s.get('status') %}: {{ s.get('status') }}{% endif %}
-          {% if s.get('delivered_at') %}- Zugestellt: {{ s.get('delivered_at') }}{% endif %}
-          {% if s.get('tracking_url') %}- [Details]({{ s.get('tracking_url') }}){% endif %}
-        {% endfor %}
-
-        {% endfor %}
+      {% endfor %}
+    {% endif %}
+  {% endfor %}
 ```
 
 ## Services
@@ -168,7 +169,7 @@ data:
 
 ### `amazon_order_status.set_status`
 
-Manually set an order or shipment status.
+Manually set an order or shipment status. `Partially delivered` is an order rollup status and is only valid without `shipment_id`.
 
 ```yaml
 service: amazon_order_status.set_status

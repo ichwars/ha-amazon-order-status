@@ -385,6 +385,30 @@ class ServiceRuntimeTest(unittest.TestCase):
                 )
             )
 
+    def test_set_status_rejects_rollup_only_status_for_target_shipment(self):
+        order_id = "123-4567890-1234567"
+        shipment_id = f"{order_id}:default"
+        coordinator = FakeCoordinator(
+            "entry-1",
+            {order_id: _order(order_id, shipment_id)},
+        )
+        hass = self._make_hass(coordinator)
+
+        with self.assertRaises(module.ServiceValidationError):
+            asyncio.run(
+                hass.services.async_call(
+                    module.DOMAIN,
+                    module.SERVICE_SET_STATUS,
+                    {
+                        module.ATTR_ORDER_ID: order_id,
+                        module.ATTR_SHIPMENT_ID: shipment_id,
+                        module.ATTR_STATUS: "Partially delivered",
+                    },
+                )
+            )
+
+        self.assertEqual([], coordinator.set_status_calls)
+
     def test_mark_delivered_accepts_iso_values_and_blank_and_rejects_free_text(self):
         order_id = "123-4567890-1234567"
         shipment_id = f"{order_id}:default"

@@ -51,7 +51,7 @@ set_status:
       selector:
         text:
     status:
-      description: Manual order or shipment status to apply.
+      description: Manual order or shipment status to apply. Partially delivered is an order rollup status and is not valid with shipment_id.
       required: true
       example: Delivered
       selector:

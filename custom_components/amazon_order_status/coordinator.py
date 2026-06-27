@@ -38,6 +38,7 @@ from .const import (
 )
 from .models import (
     ORDER_DETAIL_FIELDS,
+    clear_manual_status,
     build_order,
     build_shipment,
     set_ignored,
@@ -978,10 +979,13 @@ class AmazonOrdersCoordinator(DataUpdateCoordinator):
 
         allow_status_update = True
         if existing_status:
+            if existing_shipment and existing_shipment.get("manual"):
+                effective_status = existing_status
+                allow_status_update = False
             if status is not None:
                 existing_rank = STATUS_RANKS.get(existing_status, -1)
                 new_rank = STATUS_RANKS.get(status, -1)
-                if new_rank < existing_rank:
+                if allow_status_update and new_rank < existing_rank:
                     effective_status = existing_status
                     allow_status_update = False
                     outcome["skipped_status_regression"] = True
@@ -1175,6 +1179,7 @@ class AmazonOrdersCoordinator(DataUpdateCoordinator):
 
         updated = datetime.now(timezone.utc).isoformat()
         changed = set_ignored(order, False, updated, shipment_id=shipment_id)
+        changed = clear_manual_status(order, updated, shipment_id=shipment_id) or changed
         if not changed:
             return False
 

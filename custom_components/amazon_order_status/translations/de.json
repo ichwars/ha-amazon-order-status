@@ -172,7 +172,7 @@
         },
         "status": {
           "name": "Status",
-          "description": "Der manuelle Bestell- oder Sendungsstatus, der gesetzt werden soll."
+          "description": "Der manuelle Bestell- oder Sendungsstatus, der gesetzt werden soll. Partially delivered ist ein Bestell-Sammelstatus und mit shipment_id nicht gueltig."
         },
         "shipment_id": {
           "name": "Sendungs-ID",

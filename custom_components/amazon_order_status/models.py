@@ -413,3 +413,53 @@ def set_ignored(
         _rebuild_order_summary(order)
         return True
     return False
+
+
+def clear_manual_status(
+    order: dict[str, Any],
+    updated: str,
+    shipment_id: str | None = None,
+) -> bool:
+    """Clear manual flags from an order or one shipment and refresh the rollup."""
+    if shipment_id is None:
+        changed = bool(order.get("manual")) or any(
+            shipment.get("manual") for shipment in order.get("shipments", [])
+        )
+        if not changed:
+            return False
+        order["manual"] = False
+        order["updated"] = updated
+        for shipment in order.get("shipments", []):
+            if not shipment.get("manual"):
+                continue
+            shipment["manual"] = False
+            shipment["updated"] = updated
+            shipment["history"] = append_history(
+                shipment.get("history", []),
+                new_history_event(
+                    shipment.get("status", "Ordered"),
+                    updated,
+                    reason="restored",
+                ),
+            )
+        _rebuild_order_summary(order)
+        return True
+
+    for shipment in order.get("shipments", []):
+        if shipment.get("shipment_id") != shipment_id:
+            continue
+        if not shipment.get("manual"):
+            return False
+        shipment["manual"] = False
+        shipment["updated"] = updated
+        shipment["history"] = append_history(
+            shipment.get("history", []),
+            new_history_event(
+                shipment.get("status", "Ordered"),
+                updated,
+                reason="restored",
+            ),
+        )
+        _rebuild_order_summary(order)
+        return True
+    return False

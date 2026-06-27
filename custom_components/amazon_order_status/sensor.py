@@ -95,6 +95,10 @@ class AmazonOrderStatusSensor(AmazonOrderBaseSensor):
         orders = self._orders_for_status()
         return {
             "order_count": len(orders),
+            "shipment_count": sum(
+                int(order.get("shipment_count") or len(order.get("shipments", [])))
+                for order in orders
+            ),
             "orders": orders,
         }
 

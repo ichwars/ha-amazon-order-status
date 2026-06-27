@@ -226,6 +226,99 @@ class CoordinatorStateTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(5, fake.data[0]["item_count"])
         self.assertTrue(fake.saved)
 
+    async def test_manual_shipment_status_survives_later_email_enrichment(self):
+        fake = self._fake()
+        order_id = "123-4567890-1234567"
+        fake._upsert_order_event(
+            order_id,
+            "Shipped",
+            "Versendet: Example",
+            "2026-06-26T10:00:00+00:00",
+            None,
+            {"item_title": "Example"},
+        )
+        shipment_id = fake._orders[order_id]["shipments"][0]["shipment_id"]
+        self.assertTrue(
+            await fake.async_set_status(
+                order_id,
+                "Delivered",
+                shipment_id=shipment_id,
+            )
+        )
+
+        outcome = fake._upsert_order_event_with_outcome(
+            order_id,
+            "Refunded",
+            "Erstattung veranlasst: Example",
+            "2026-06-26T12:00:00+00:00",
+            None,
+            {"item_title": "Example", "carrier": "DHL"},
+        )
+
+        shipment = fake._find_shipment(fake._orders[order_id], shipment_id)
+        self.assertTrue(outcome["changed"])
+        self.assertTrue(outcome["enriched"])
+        self.assertEqual("Delivered", shipment["status"])
+        self.assertEqual("DHL", shipment["carrier"])
+        self.assertTrue(shipment["manual"])
+        self.assertEqual("Delivered", fake._orders[order_id]["status"])
+
+    async def test_restore_order_clears_manual_flags(self):
+        fake = self._fake()
+        order_id = "123-4567890-1234567"
+        fake._upsert_order_event(
+            order_id,
+            "Shipped",
+            "Versendet: Example",
+            "2026-06-26T10:00:00+00:00",
+            None,
+            {"item_title": "Example"},
+        )
+        self.assertTrue(await fake.async_set_status(order_id, "Delivered"))
+
+        self.assertTrue(await fake.async_restore_order(order_id))
+
+        order = fake._orders[order_id]
+        self.assertFalse(order["manual"])
+        self.assertTrue(all(not shipment["manual"] for shipment in order["shipments"]))
+
+    async def test_restore_target_shipment_clears_only_target_manual_flag(self):
+        fake = self._fake()
+        order_id = "123-4567890-1234567"
+        fake._upsert_order_event(
+            order_id,
+            "Shipped",
+            "Versendet: First",
+            "2026-06-26T10:00:00+00:00",
+            None,
+            {"item_title": "First"},
+        )
+        fake._upsert_order_event(
+            order_id,
+            "Shipped",
+            "Versendet: Second",
+            "2026-06-26T11:00:00+00:00",
+            None,
+            {"item_title": "Second"},
+        )
+        first_shipment_id = fake._orders[order_id]["shipments"][0]["shipment_id"]
+        second_shipment_id = fake._orders[order_id]["shipments"][1]["shipment_id"]
+        self.assertTrue(await fake.async_set_status(order_id, "Delivered"))
+
+        self.assertTrue(
+            await fake.async_restore_order(
+                order_id,
+                shipment_id=first_shipment_id,
+            )
+        )
+
+        order = fake._orders[order_id]
+        first_shipment = fake._find_shipment(order, first_shipment_id)
+        second_shipment = fake._find_shipment(order, second_shipment_id)
+        self.assertFalse(first_shipment["manual"])
+        self.assertTrue(second_shipment["manual"])
+        self.assertTrue(order["manual"])
+
     async def test_ignore_and_restore_order(self):
         fake = self._fake()
         fake._upsert_order_event(
