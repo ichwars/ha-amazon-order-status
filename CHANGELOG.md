@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.0.3
+
+### Fixed
+
+- Kept status sensor attributes below Home Assistant recorder's 16 KB limit. Large `orders` attributes are now truncated, or compacted by dropping nested history lists, while `order_count` and `shipment_count` continue to report the full matching totals.
+
 ## 2.0.2
 
 ### Fixed

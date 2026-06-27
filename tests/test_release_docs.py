@@ -19,6 +19,8 @@ REQUIRED_README_SNIPPETS = (
     "amazon_order_status.mark_delivered",
     "amazon_order_status.ignore_order",
     "amazon_order_status.restore_order",
+    "orders_truncated",
+    "orders_compacted",
 )
 
 STATUS_ENTITY_IDS = (
@@ -80,9 +82,9 @@ def _dashboard_section(text: str) -> str:
 class ReleaseDocsTest(unittest.TestCase):
     """Verify release metadata and upgrade documentation for 2.0.x."""
 
-    def test_manifest_version_is_2_0_2(self):
+    def test_manifest_version_is_2_0_3(self):
         manifest = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
-        self.assertEqual("2.0.2", manifest["version"])
+        self.assertEqual("2.0.3", manifest["version"])
 
     def test_readme_contains_required_2_0_snippets(self):
         text = _readme_text()

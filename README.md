@@ -75,6 +75,8 @@ data:
 
 Each status sensor exposes an `orders` attribute. In 2.0, every order can contain nested `shipments`, so dashboards should read both levels defensively with `.get(...)`.
 
+To avoid Home Assistant recorder warnings, very large status attributes are capped below the recorder limit. `order_count` and `shipment_count` still report the full totals. When `orders` cannot include every matching order, the sensor adds `orders_shown`, `orders_truncated`, and `attribute_limit_bytes`. If one large order only fits after nested history lists are removed, `orders_compacted: true` is added.
+
 2.0 status sensors:
 
 - `sensor.amazon_orders_ordered`
@@ -131,6 +133,7 @@ content: >
   ] %}
   {% for cfg in status_sensoren %}
     {% set orders = state_attr(cfg.get('entity'), 'orders') or [] %}
+    {% set orders_truncated = state_attr(cfg.get('entity'), 'orders_truncated') or 0 %}
     {% if orders %}
       ## {{ cfg.get('titel') }} ({{ cfg.get('status') }})
       {% for o in orders %}
@@ -149,6 +152,12 @@ content: >
           {% if s.get('tracking_url') %}- [Tracking]({{ s.get('tracking_url') }}){% endif %}
         {% endfor %}
       {% endfor %}
+      {% if orders_truncated %}
+      _Weitere {{ orders_truncated }} Bestellung(en) wegen Home-Assistant-Recorder-Grenze ausgeblendet._
+      {% endif %}
+      {% if state_attr(cfg.get('entity'), 'orders_compacted') %}
+      _Historien wurden fuer diese Ansicht gekuerzt._
+      {% endif %}
     {% endif %}
   {% endfor %}
 ```

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import importlib.util
+import json
 from pathlib import Path
 from types import SimpleNamespace
 import sys
@@ -92,6 +93,19 @@ def _load_sensor_module():
 
 
 sensor = _load_sensor_module()
+
+RECORDER_ATTRIBUTE_MAX_BYTES = 16_384
+
+
+def _attribute_bytes(attributes: dict) -> int:
+    return len(
+        json.dumps(
+            attributes,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            default=str,
+        ).encode("utf-8")
+    )
 
 
 class SensorAttributeFilteringTest(unittest.TestCase):
@@ -230,6 +244,144 @@ class SensorAttributeFilteringTest(unittest.TestCase):
 
         self.assertEqual(2, attributes["order_count"])
         self.assertEqual(3, attributes["shipment_count"])
+
+    def test_status_sensor_compacts_large_order_attributes_for_recorder(self):
+        history = [
+            {
+                "status": "Shipped",
+                "updated": f"2026-06-26T10:{minute:02d}:00+00:00",
+                "subject": "Sehr lange Amazon Versandbenachrichtigung " + ("x" * 800),
+                "tracking_url": "https://www.amazon.de/gp/your-account/ship-track/"
+                + ("y" * 400),
+            }
+            for minute in range(20)
+        ]
+        shipments = [
+            {
+                "shipment_id": f"123-4567890-1234567:item-{index}",
+                "status": "Delivered" if index == 0 else "Shipped",
+                "item_title": "Sehr langer Artikeltitel " + ("z" * 800),
+                "tracking_url": "https://www.amazon.de/gp/your-account/ship-track/"
+                + ("t" * 400),
+                "delivery_estimate": "heute",
+                "delivery_window": "15:00 - 19:00",
+                "delivery_window_start": "15:00",
+                "delivery_window_end": "19:00",
+                "item_count": 1,
+                "item_image_url": "https://m.media-amazon.com/images/I/"
+                + ("i" * 300)
+                + ".jpg",
+                "updated": f"2026-06-26T11:{index:02d}:00+00:00",
+                "history": list(history),
+                "manual": False,
+                "ignored": False,
+            }
+            for index in range(2)
+        ]
+        coordinator = SimpleNamespace(
+            entry=SimpleNamespace(entry_id="entry-1"),
+            data=[
+                {
+                    "order_id": "123-4567890-1234567",
+                    "status": "Partially delivered",
+                    "subject": "Teilweise zugestellt: " + ("s" * 800),
+                    "last_subject": "Teilweise zugestellt: " + ("s" * 800),
+                    "item_title": "Sehr langer Artikeltitel " + ("z" * 800),
+                    "tracking_url": "https://www.amazon.de/gp/your-account/ship-track/"
+                    + ("t" * 400),
+                    "delivery_estimate": "heute",
+                    "delivery_window": "15:00 - 19:00",
+                    "item_count": 2,
+                    "item_image_url": "https://m.media-amazon.com/images/I/"
+                    + ("i" * 300)
+                    + ".jpg",
+                    "updated": "2026-06-26T12:00:00+00:00",
+                    "shipment_count": 2,
+                    "shipments": shipments,
+                    "history": list(history),
+                    "manual": False,
+                    "ignored": False,
+                }
+            ],
+            expose_order_id=True,
+            expose_item_title=True,
+            expose_tracking_url=True,
+            expose_delivery_details=True,
+            expose_carrier=False,
+            expose_item_image=True,
+            expose_parser_debug=False,
+        )
+        description = sensor.AmazonOrderSensorDescription(
+            key="partially_delivered",
+            name="Partially delivered",
+            status="Partially delivered",
+        )
+        status_sensor = sensor.AmazonOrderStatusSensor(coordinator, description)
+
+        attributes = status_sensor.extra_state_attributes
+
+        self.assertLessEqual(
+            _attribute_bytes(attributes),
+            RECORDER_ATTRIBUTE_MAX_BYTES,
+        )
+        self.assertEqual(1, attributes["order_count"])
+        self.assertEqual(2, attributes["shipment_count"])
+        self.assertEqual(1, attributes["orders_shown"])
+        self.assertEqual(0, attributes["orders_truncated"])
+        self.assertTrue(attributes["orders_compacted"])
+        self.assertNotIn("history", attributes["orders"][0])
+        self.assertNotIn("history", attributes["orders"][0]["shipments"][0])
+
+    def test_status_sensor_truncates_many_orders_for_recorder(self):
+        orders = [
+            {
+                "order_id": f"123-4567890-{index:07d}",
+                "status": "Shipped",
+                "updated": f"2026-06-26T12:{index % 60:02d}:00+00:00",
+                "shipment_count": 1,
+                "shipments": [
+                    {
+                        "shipment_id": f"123-4567890-{index:07d}:default",
+                        "status": "Shipped",
+                        "updated": f"2026-06-26T12:{index % 60:02d}:00+00:00",
+                        "history": [],
+                        "manual": False,
+                        "ignored": False,
+                    }
+                ],
+                "history": [],
+                "manual": False,
+                "ignored": False,
+            }
+            for index in range(200)
+        ]
+        coordinator = SimpleNamespace(
+            entry=SimpleNamespace(entry_id="entry-1"),
+            data=orders,
+            expose_order_id=True,
+            expose_item_title=False,
+            expose_tracking_url=False,
+            expose_delivery_details=False,
+            expose_carrier=False,
+            expose_item_image=False,
+            expose_parser_debug=False,
+        )
+        description = sensor.AmazonOrderSensorDescription(
+            key="shipped",
+            name="Shipped",
+            status="Shipped",
+        )
+        status_sensor = sensor.AmazonOrderStatusSensor(coordinator, description)
+
+        attributes = status_sensor.extra_state_attributes
+
+        self.assertLessEqual(
+            _attribute_bytes(attributes),
+            RECORDER_ATTRIBUTE_MAX_BYTES,
+        )
+        self.assertEqual(200, attributes["order_count"])
+        self.assertGreater(attributes["orders_truncated"], 0)
+        self.assertLess(attributes["orders_shown"], attributes["order_count"])
 
     def test_nested_shipments_respect_privacy_options(self):
         coordinator = SimpleNamespace(

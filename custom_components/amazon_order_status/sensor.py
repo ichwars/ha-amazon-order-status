@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+import json
 from typing import Any
 
 from homeassistant.components.sensor import (
@@ -40,6 +41,9 @@ LAST_UPDATED_SENSOR = AmazonOrderSensorDescription(
     name="Last Updated",
     device_class=SensorDeviceClass.TIMESTAMP,
 )
+
+RECORDER_ATTRIBUTE_MAX_BYTES = 16_384
+RECORDER_ATTRIBUTE_TARGET_BYTES = 14_000
 
 
 async def async_setup_entry(
@@ -93,14 +97,7 @@ class AmazonOrderStatusSensor(AmazonOrderBaseSensor):
     def extra_state_attributes(self) -> dict[str, Any]:
         """Return order details for this status."""
         orders = self._orders_for_status()
-        return {
-            "order_count": len(orders),
-            "shipment_count": sum(
-                int(order.get("shipment_count") or len(order.get("shipments", [])))
-                for order in orders
-            ),
-            "orders": orders,
-        }
+        return _recorder_safe_status_attributes(orders)
 
     def _orders_for_status(self) -> list[dict[str, Any]]:
         """Return orders matching this sensor's status."""
@@ -174,6 +171,112 @@ def _build_exposed_order(
 
     order["history"] = _filtered_history(coordinator, data.get("history", []))
     return order
+
+
+def _recorder_safe_status_attributes(orders: list[dict[str, Any]]) -> dict[str, Any]:
+    """Return status attributes sized to stay below Home Assistant recorder limits."""
+    base = _status_attribute_counts(orders)
+    attributes = {**base, "orders": orders}
+    if _attribute_bytes(attributes) <= RECORDER_ATTRIBUTE_TARGET_BYTES:
+        return attributes
+
+    limited = _fit_orders_within_attribute_budget(base, orders, compacted=False)
+    if limited["orders"]:
+        return limited
+
+    compact_orders = [_compact_order_for_recorder(order) for order in orders]
+    return _fit_orders_within_attribute_budget(base, compact_orders, compacted=True)
+
+
+def _status_attribute_counts(orders: list[dict[str, Any]]) -> dict[str, int]:
+    """Return count attributes that always reflect the full matching order set."""
+    return {
+        "order_count": len(orders),
+        "shipment_count": sum(
+            int(order.get("shipment_count") or len(order.get("shipments", [])))
+            for order in orders
+        ),
+    }
+
+
+def _fit_orders_within_attribute_budget(
+    base: dict[str, int],
+    orders: list[dict[str, Any]],
+    *,
+    compacted: bool,
+) -> dict[str, Any]:
+    """Return as many orders as fit within the recorder-safe attribute budget."""
+    shown: list[dict[str, Any]] = []
+    for order in orders:
+        candidate = _limited_status_attributes(
+            base,
+            [*shown, order],
+            total_orders=len(orders),
+            compacted=compacted,
+        )
+        if _attribute_bytes(candidate) > RECORDER_ATTRIBUTE_TARGET_BYTES:
+            break
+        shown.append(order)
+
+    return _limited_status_attributes(
+        base,
+        shown,
+        total_orders=len(orders),
+        compacted=compacted,
+    )
+
+
+def _limited_status_attributes(
+    base: dict[str, int],
+    orders: list[dict[str, Any]],
+    *,
+    total_orders: int,
+    compacted: bool,
+) -> dict[str, Any]:
+    """Build status attributes with truncation metadata."""
+    attributes: dict[str, Any] = {
+        **base,
+        "orders": orders,
+        "orders_shown": len(orders),
+        "orders_truncated": max(total_orders - len(orders), 0),
+        "attribute_limit_bytes": RECORDER_ATTRIBUTE_MAX_BYTES,
+    }
+    if compacted:
+        attributes["orders_compacted"] = True
+    return attributes
+
+
+def _compact_order_for_recorder(order: dict[str, Any]) -> dict[str, Any]:
+    """Return an order payload without history lists for oversized attributes."""
+    compact_order = {
+        key: value
+        for key, value in order.items()
+        if key != "history"
+    }
+    shipments = compact_order.get("shipments")
+    if isinstance(shipments, list):
+        compact_order["shipments"] = [
+            {
+                key: value
+                for key, value in shipment.items()
+                if key != "history"
+            }
+            for shipment in shipments
+            if isinstance(shipment, dict)
+        ]
+    return compact_order
+
+
+def _attribute_bytes(attributes: dict[str, Any]) -> int:
+    """Return the JSON byte size Home Assistant recorder will roughly persist."""
+    return len(
+        json.dumps(
+            attributes,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            default=str,
+        ).encode("utf-8")
+    )
 
 
 def _filtered_shipments(
