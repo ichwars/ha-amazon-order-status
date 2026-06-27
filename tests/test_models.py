@@ -147,6 +147,40 @@ class ModelsTest(unittest.TestCase):
         self.assertTrue(order["shipments"][0]["manual"])
         self.assertEqual("manual", order["shipments"][0]["delivered_at"])
 
+    def test_clear_target_manual_status_clears_order_rollup_when_last_manual(self):
+        shipment = models.build_shipment(
+            "123-4567890-1234567",
+            "Shipped",
+            "2026-06-26T10:00:00+00:00",
+            "Versendet: Example",
+            "example",
+            "Example",
+            None,
+            {},
+        )
+        order = models.build_order(
+            "123-4567890-1234567",
+            shipment,
+            "Versendet: Example",
+            "2026-06-26T10:00:00+00:00",
+        )
+        models.set_manual_status(
+            order,
+            "Delivered",
+            "2026-06-26T12:00:00+00:00",
+            shipment_id=shipment["shipment_id"],
+        )
+
+        changed = models.clear_manual_status(
+            order,
+            "2026-06-26T13:00:00+00:00",
+            shipment_id=shipment["shipment_id"],
+        )
+
+        self.assertTrue(changed)
+        self.assertFalse(order["shipments"][0]["manual"])
+        self.assertFalse(order["manual"])
+
 
 if __name__ == "__main__":
     unittest.main()

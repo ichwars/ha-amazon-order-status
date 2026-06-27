@@ -147,9 +147,7 @@ def _rebuild_order_summary(order: dict[str, Any]) -> dict[str, Any]:
             order["last_subject"] = latest_subject
             order.setdefault("subject", latest_subject)
 
-    order["manual"] = bool(order.get("manual")) or any(
-        shipment.get("manual") for shipment in shipments
-    )
+    order["manual"] = any(shipment.get("manual") for shipment in shipments)
     order["history"] = append_history(
         order.get("history", []),
         new_history_event(
