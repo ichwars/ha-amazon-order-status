@@ -80,9 +80,9 @@ def _dashboard_section(text: str) -> str:
 class ReleaseDocsTest(unittest.TestCase):
     """Verify release metadata and upgrade documentation for 2.0.x."""
 
-    def test_manifest_version_is_2_0_1(self):
+    def test_manifest_version_is_2_0_2(self):
         manifest = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
-        self.assertEqual("2.0.1", manifest["version"])
+        self.assertEqual("2.0.2", manifest["version"])
 
     def test_readme_contains_required_2_0_snippets(self):
         text = _readme_text()

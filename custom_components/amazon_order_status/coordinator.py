@@ -132,12 +132,26 @@ async def _async_migrate_storage(
         return data or {}
 
     _LOGGER.info(
-        "Ignoring legacy Amazon Order Status storage version %s.%s for 2.0.0; "
+        "Ignoring legacy Amazon Order Status storage version %s.%s for 2.0; "
         "run amazon_order_status.rescan with clear_existing: true to rebuild",
         version,
         minor_version,
     )
     return {}
+
+
+class AmazonOrderStatusStore(Store):
+    """Home Assistant store with integration-specific storage migration."""
+
+    async def _async_migrate_func(
+        self,
+        version: int,
+        minor_version: int,
+        data: dict[str, Any],
+    ) -> dict[str, Any]:
+        return await _async_migrate_storage(version, minor_version, data)
+
+
 AMAZON_IMAGE_DOMAIN_PATTERN = re.compile(
     r"(^|\.)("
     r"media-amazon\.com|ssl-images-amazon\.com|images-amazon\.com"
@@ -796,17 +810,15 @@ class AmazonOrdersCoordinator(DataUpdateCoordinator):
     def __init__(self, hass: HomeAssistant, entry: ConfigEntry):
         self.hass = hass
         self.entry = entry
-        self._store = Store(
+        self._store = AmazonOrderStatusStore(
             hass,
             STORAGE_VERSION,
             f"{STORAGE_KEY}_{entry.entry_id}",
-            migrate_func=_async_migrate_storage,
         )
-        self._legacy_store = Store(
+        self._legacy_store = AmazonOrderStatusStore(
             hass,
             STORAGE_VERSION,
             STORAGE_KEY,
-            migrate_func=_async_migrate_storage,
         )
         self._orders: Dict[str, dict] = {}
         self.delivered_retention_days = int(entry.options.get("delivered_retention_days", 7))

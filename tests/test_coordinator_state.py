@@ -35,12 +35,14 @@ def _load_coordinator_module():
     class Store:
         instances = []
 
-        def __init__(self, hass, version, key, **kwargs):
+        def __init__(self, hass, version, key):
             self.hass = hass
             self.version = version
             self.key = key
-            self.kwargs = kwargs
             self.__class__.instances.append(self)
+
+        async def _async_migrate_func(self, version, minor_version, data):
+            raise NotImplementedError
 
     storage.Store = Store
     sys.modules.update(
@@ -93,7 +95,7 @@ class CoordinatorStateTest(unittest.IsolatedAsyncioTestCase):
         fake.async_save_state = save_state
         return fake
 
-    def test_store_uses_migration_callback_for_entry_and_legacy_state(self):
+    def test_store_subclass_supplies_migration_without_constructor_kwargs(self):
         coordinator.Store.instances.clear()
         entry = SimpleNamespace(
             entry_id="entry-1",
@@ -107,9 +109,16 @@ class CoordinatorStateTest(unittest.IsolatedAsyncioTestCase):
         for store in coordinator.Store.instances:
             with self.subTest(key=store.key):
                 self.assertEqual(coordinator.STORAGE_VERSION, store.version)
-                self.assertIs(
-                    coordinator._async_migrate_storage,
-                    store.kwargs.get("migrate_func"),
+                self.assertIsInstance(store, coordinator.AmazonOrderStatusStore)
+                self.assertEqual(
+                    {},
+                    asyncio.run(
+                        store._async_migrate_func(
+                            1,
+                            1,
+                            {coordinator.ORDERS_KEY: {"legacy": {}}},
+                        )
+                    ),
                 )
 
     def test_legacy_storage_migration_drops_old_order_payloads(self):

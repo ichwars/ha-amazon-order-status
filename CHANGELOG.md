@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.0.2
+
+### Fixed
+
+- Fixed Home Assistant startup on versions where `homeassistant.helpers.storage.Store` does not accept a `migrate_func` constructor argument. The 2.0 storage migration now uses Home Assistant's `_async_migrate_func` hook through an integration-specific Store subclass.
+
 ## 2.0.1
 
 ### Fixed
