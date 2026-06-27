@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import asyncio
 from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -22,10 +23,26 @@ def _load_coordinator_module():
     config_entries.ConfigEntry = object
     helpers = types.ModuleType("homeassistant.helpers")
     update_coordinator = types.ModuleType("homeassistant.helpers.update_coordinator")
-    update_coordinator.DataUpdateCoordinator = object
+
+    class DataUpdateCoordinator:
+        def __init__(self, *args, **kwargs):
+            pass
+
+    update_coordinator.DataUpdateCoordinator = DataUpdateCoordinator
     update_coordinator.UpdateFailed = Exception
     storage = types.ModuleType("homeassistant.helpers.storage")
-    storage.Store = object
+
+    class Store:
+        instances = []
+
+        def __init__(self, hass, version, key, **kwargs):
+            self.hass = hass
+            self.version = version
+            self.key = key
+            self.kwargs = kwargs
+            self.__class__.instances.append(self)
+
+    storage.Store = Store
     sys.modules.update(
         {
             "homeassistant": types.ModuleType("homeassistant"),
@@ -75,6 +92,41 @@ class CoordinatorStateTest(unittest.IsolatedAsyncioTestCase):
 
         fake.async_save_state = save_state
         return fake
+
+    def test_store_uses_migration_callback_for_entry_and_legacy_state(self):
+        coordinator.Store.instances.clear()
+        entry = SimpleNamespace(
+            entry_id="entry-1",
+            options={},
+            data={},
+        )
+
+        coordinator.AmazonOrdersCoordinator(SimpleNamespace(), entry)
+
+        self.assertEqual(2, len(coordinator.Store.instances))
+        for store in coordinator.Store.instances:
+            with self.subTest(key=store.key):
+                self.assertEqual(coordinator.STORAGE_VERSION, store.version)
+                self.assertIs(
+                    coordinator._async_migrate_storage,
+                    store.kwargs.get("migrate_func"),
+                )
+
+    def test_legacy_storage_migration_drops_old_order_payloads(self):
+        legacy_data = {
+            coordinator.LAST_CHECK_KEY: "2026-06-26T08:00:00+00:00",
+            coordinator.ORDERS_KEY: {
+                "123-4567890-1234567": {
+                    "order_id": "123-4567890-1234567",
+                    "status": "Shipped",
+                    "updated": "2026-06-26T08:00:00+00:00",
+                }
+            },
+        }
+
+        migrated = asyncio.run(coordinator._async_migrate_storage(1, 1, legacy_data))
+
+        self.assertEqual({}, migrated)
 
     def test_upsert_creates_shipments_and_partial_rollup(self):
         fake = self._fake()

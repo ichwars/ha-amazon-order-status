@@ -120,6 +120,24 @@ AMAZON_DOMAIN_PATTERN = re.compile(
     r"com\.au|com\.tr|ae|sa|sg|in|com\.br)$",
     re.IGNORECASE,
 )
+
+
+async def _async_migrate_storage(
+    version: int,
+    minor_version: int,
+    data: dict[str, Any],
+) -> dict[str, Any]:
+    """Migrate Home Assistant storage metadata without importing 1.x orders."""
+    if version == STORAGE_VERSION:
+        return data or {}
+
+    _LOGGER.info(
+        "Ignoring legacy Amazon Order Status storage version %s.%s for 2.0.0; "
+        "run amazon_order_status.rescan with clear_existing: true to rebuild",
+        version,
+        minor_version,
+    )
+    return {}
 AMAZON_IMAGE_DOMAIN_PATTERN = re.compile(
     r"(^|\.)("
     r"media-amazon\.com|ssl-images-amazon\.com|images-amazon\.com"
@@ -778,8 +796,18 @@ class AmazonOrdersCoordinator(DataUpdateCoordinator):
     def __init__(self, hass: HomeAssistant, entry: ConfigEntry):
         self.hass = hass
         self.entry = entry
-        self._store = Store(hass, STORAGE_VERSION, f"{STORAGE_KEY}_{entry.entry_id}")
-        self._legacy_store = Store(hass, STORAGE_VERSION, STORAGE_KEY)
+        self._store = Store(
+            hass,
+            STORAGE_VERSION,
+            f"{STORAGE_KEY}_{entry.entry_id}",
+            migrate_func=_async_migrate_storage,
+        )
+        self._legacy_store = Store(
+            hass,
+            STORAGE_VERSION,
+            STORAGE_KEY,
+            migrate_func=_async_migrate_storage,
+        )
         self._orders: Dict[str, dict] = {}
         self.delivered_retention_days = int(entry.options.get("delivered_retention_days", 7))
         self._initial_scan_days = int(entry.options.get(CONF_INITIAL_SCAN_DAYS, 14))
