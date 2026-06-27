@@ -1,5 +1,44 @@
 # Changelog
 
+## 2.0.0
+
+### Breaking Changes
+
+- This release moves the runtime and sensor payloads to a shipment-first 2.0 model with nested `shipments` on each order.
+- Legacy 1.x stored order state is not migrated into the new 2.0 sensor data.
+- Users should rebuild tracked state with `amazon_order_status.rescan` instead of relying on old persisted order payloads.
+
+### Migration
+
+After updating and restarting Home Assistant, rebuild the tracked order list with:
+
+```yaml
+service: amazon_order_status.rescan
+data:
+  days: 30
+  clear_existing: true
+```
+
+Use `clear_existing: true` for the initial 2.0 migration rebuild. Use `clear_existing: false` only when you want to enrich existing 2.0 orders from recent email without wiping them first.
+
+### Added
+
+- Shipment-first order storage with nested `shipments` in sensor attributes.
+- Rolled-up order status sensors for the expanded state model, including `sensor.amazon_orders_partially_delivered`.
+- Manual workflow services: `amazon_order_status.set_status`, `amazon_order_status.mark_delivered`, `amazon_order_status.ignore_order`, and `amazon_order_status.restore_order`.
+- German-first dashboard documentation that iterates nested shipments safely with `o.get(...)` and `s.get(...)`.
+
+### Changed
+
+- Release metadata now identifies this integration as version `2.0.0`.
+- Upgrade guidance now documents the required rescan-based rebuild workflow for breaking changes.
+
+### Privacy
+
+- Raw email bodies are still not stored.
+- Sensitive attributes such as order IDs, titles, tracking URLs, delivery details, carrier data, item images, and parser diagnostics remain opt-in or hideable through integration options.
+- Tracking URLs continue to be filtered to trusted HTTPS Amazon domains before exposure.
+
 ## 1.4.11
 
 ### Fixed
