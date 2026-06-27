@@ -1,4 +1,4 @@
-"""Release documentation regression tests for the 2.0.0 release."""
+"""Release documentation regression tests for the 2.0 release."""
 
 from __future__ import annotations
 
@@ -78,11 +78,11 @@ def _dashboard_section(text: str) -> str:
 
 
 class ReleaseDocsTest(unittest.TestCase):
-    """Verify release metadata and upgrade documentation for 2.0.0."""
+    """Verify release metadata and upgrade documentation for 2.0.x."""
 
-    def test_manifest_version_is_2_0_0(self):
+    def test_manifest_version_is_2_0_1(self):
         manifest = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
-        self.assertEqual("2.0.0", manifest["version"])
+        self.assertEqual("2.0.1", manifest["version"])
 
     def test_readme_contains_required_2_0_snippets(self):
         text = _readme_text()

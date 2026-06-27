@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.0.1
+
+### Fixed
+
+- Fixed Home Assistant setup for installations upgrading from pre-2.0 storage. The 2.0 storage migration now intentionally drops old stored order payloads instead of letting Home Assistant's storage helper raise `NotImplementedError`; rebuild tracked state with `amazon_order_status.rescan` and `clear_existing: true`.
+
 ## 2.0.0
 
 ### Breaking Changes
