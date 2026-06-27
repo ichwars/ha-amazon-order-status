@@ -198,7 +198,7 @@
         },
         "delivered_at": {
           "name": "Zugestellt um",
-          "description": "Optionaler Zustellhinweis, der mit der manuellen Zustellung gespeichert wird, zum Beispiel Haustür."
+          "description": "Optionales ISO-Datum oder ISO-Datum mit Uhrzeit fuer die manuelle Zustellung, zum Beispiel 2026-06-27 oder 2026-06-27 18:30."
         },
         "config_entry_id": {
           "name": "Config-Entry-ID",

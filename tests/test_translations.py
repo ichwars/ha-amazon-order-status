@@ -217,6 +217,27 @@ class TranslationCoverageTest(unittest.TestCase):
                                 self.assertIn("name", translated_fields[field_name])
                                 self.assertIn("description", translated_fields[field_name])
 
+    def test_mark_delivered_describes_iso_datetime_input(self):
+        services_yaml = _load_services()
+        delivered_yaml = services_yaml["mark_delivered"]["fields"]["delivered_at"]
+        yaml_text = SERVICES_PATH.read_text()
+
+        self.assertIn("ISO", yaml_text)
+        self.assertIn("2026-06-27", yaml_text)
+        self.assertTrue(delivered_yaml["required"] is False)
+
+        en_description = _load_translation("en")["services"]["mark_delivered"]["fields"][
+            "delivered_at"
+        ]["description"]
+        de_description = _load_translation("de")["services"]["mark_delivered"]["fields"][
+            "delivered_at"
+        ]["description"]
+
+        self.assertIn("ISO", en_description)
+        self.assertIn("date", en_description.lower())
+        self.assertIn("ISO", de_description)
+        self.assertIn("datum", de_description.lower())
+
 
 if __name__ == "__main__":
     unittest.main()

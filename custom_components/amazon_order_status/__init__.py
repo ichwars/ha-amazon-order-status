@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from datetime import date, datetime
 import logging
+import re
 
 import voluptuous as vol
 from homeassistant.config_entries import ConfigEntry, ConfigEntryState
@@ -34,6 +36,38 @@ _LOGGER = logging.getLogger(__name__)
 
 PLATFORMS = [Platform.SENSOR]
 
+_ISO_LIKE_DELIVERED_AT_RE = re.compile(
+    r"^\d{4}-\d{2}-\d{2}"
+    r"(?:[ T]\d{2}:\d{2}(?::\d{2}(?:\.\d{1,6})?)?(?:Z|[+-]\d{2}:\d{2})?)?$"
+)
+
+
+def _validated_manual_delivered_at(value: str | None) -> str | None:
+    """Validate manual delivered-at input for service calls."""
+    if value is None:
+        return None
+
+    normalized = value.strip()
+    if not normalized:
+        return None
+    if not _ISO_LIKE_DELIVERED_AT_RE.fullmatch(normalized):
+        raise vol.Invalid("delivered_at must be an ISO date or datetime")
+
+    candidate = (
+        f"{normalized[:-1]}+00:00"
+        if normalized.endswith("Z")
+        else normalized
+    )
+    try:
+        if "T" in candidate or " " in candidate:
+            datetime.fromisoformat(candidate)
+        else:
+            date.fromisoformat(candidate)
+    except ValueError as err:
+        raise vol.Invalid("delivered_at must be an ISO date or datetime") from err
+
+    return normalized
+
 PURGE_ORDER_SCHEMA = vol.Schema(
     {
         vol.Required(ATTR_ORDER_ID): cv.string,
@@ -64,7 +98,7 @@ SET_STATUS_SCHEMA = vol.Schema(
 MARK_DELIVERED_SCHEMA = vol.Schema(
     {
         vol.Required(ATTR_ORDER_ID): cv.string,
-        vol.Optional(ATTR_DELIVERED_AT): cv.string,
+        vol.Optional(ATTR_DELIVERED_AT): _validated_manual_delivered_at,
         vol.Optional(ATTR_SHIPMENT_ID): cv.string,
         vol.Optional(ATTR_CONFIG_ENTRY_ID): cv.string,
     }

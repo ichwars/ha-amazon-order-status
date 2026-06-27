@@ -99,9 +99,9 @@ mark_delivered:
       selector:
         text:
     delivered_at:
-      description: Optional delivered-at text to store with the manual delivery update, for example Front door.
+      description: Optional ISO date/time to store with the manual delivery update, for example 2026-06-27 or 2026-06-27 18:30.
       required: false
-      example: Front door
+      example: "2026-06-27T18:30:00+02:00"
       selector:
         text:
     config_entry_id:
