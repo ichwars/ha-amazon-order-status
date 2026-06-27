@@ -161,6 +161,86 @@
           "description": "Optionale Home-Assistant-Config-Entry-ID. Leer lassen, um alle geladenen Amazon-Order-Status-Einträge zu verwenden."
         }
       }
+    },
+    "set_status": {
+      "name": "Manuellen Status setzen",
+      "description": "Setzt einen manuellen Status für eine verfolgte Bestellung oder eine einzelne Sendung innerhalb der Bestellung.",
+      "fields": {
+        "order_id": {
+          "name": "Bestellnummer",
+          "description": "Die Amazon-Bestellnummer, die aktualisiert werden soll, z. B. 123-4567890-1234567."
+        },
+        "status": {
+          "name": "Status",
+          "description": "Der manuelle Bestell- oder Sendungsstatus, der gesetzt werden soll."
+        },
+        "shipment_id": {
+          "name": "Sendungs-ID",
+          "description": "Optionale Sendungs-ID, um nur eine Sendung der Bestellung zu aktualisieren. Leer lassen, um die ganze Bestellung zu aktualisieren."
+        },
+        "config_entry_id": {
+          "name": "Config-Entry-ID",
+          "description": "Optionale Home-Assistant-Config-Entry-ID. Leer lassen, um passende Bestellungen in allen geladenen Amazon-Order-Status-Einträgen zu aktualisieren."
+        }
+      }
+    },
+    "mark_delivered": {
+      "name": "Als zugestellt markieren",
+      "description": "Markiert eine verfolgte Bestellung oder eine einzelne Sendung manuell als zugestellt.",
+      "fields": {
+        "order_id": {
+          "name": "Bestellnummer",
+          "description": "Die Amazon-Bestellnummer, die als zugestellt markiert werden soll, z. B. 123-4567890-1234567."
+        },
+        "shipment_id": {
+          "name": "Sendungs-ID",
+          "description": "Optionale Sendungs-ID, um nur eine Sendung als zugestellt zu markieren. Leer lassen, um die ganze Bestellung zu aktualisieren."
+        },
+        "delivered_at": {
+          "name": "Zugestellt um",
+          "description": "Optionaler Zustellhinweis, der mit der manuellen Zustellung gespeichert wird, zum Beispiel Haustür."
+        },
+        "config_entry_id": {
+          "name": "Config-Entry-ID",
+          "description": "Optionale Home-Assistant-Config-Entry-ID. Leer lassen, um passende Bestellungen in allen geladenen Amazon-Order-Status-Einträgen zu aktualisieren."
+        }
+      }
+    },
+    "ignore_order": {
+      "name": "Bestellung ignorieren",
+      "description": "Ignoriert eine verfolgte Bestellung oder eine einzelne Sendung, damit sie nicht mehr in aktiven Workflow-Sensoren erscheint.",
+      "fields": {
+        "order_id": {
+          "name": "Bestellnummer",
+          "description": "Die Amazon-Bestellnummer, die ignoriert werden soll, z. B. 123-4567890-1234567."
+        },
+        "shipment_id": {
+          "name": "Sendungs-ID",
+          "description": "Optionale Sendungs-ID, um nur eine Sendung zu ignorieren. Leer lassen, um die ganze Bestellung zu ignorieren."
+        },
+        "config_entry_id": {
+          "name": "Config-Entry-ID",
+          "description": "Optionale Home-Assistant-Config-Entry-ID. Leer lassen, um passende Bestellungen in allen geladenen Amazon-Order-Status-Einträgen zu aktualisieren."
+        }
+      }
+    },
+    "restore_order": {
+      "name": "Bestellung wiederherstellen",
+      "description": "Stellt eine ignorierte Bestellung oder einzelne Sendung wieder her, damit sie wieder normal verfolgt wird.",
+      "fields": {
+        "order_id": {
+          "name": "Bestellnummer",
+          "description": "Die Amazon-Bestellnummer, die wiederhergestellt werden soll, z. B. 123-4567890-1234567."
+        },
+        "shipment_id": {
+          "name": "Sendungs-ID",
+          "description": "Optionale Sendungs-ID, um nur eine Sendung wiederherzustellen. Leer lassen, um die ganze Bestellung wiederherzustellen."
+        },
+        "config_entry_id": {
+          "name": "Config-Entry-ID",
+          "description": "Optionale Home-Assistant-Config-Entry-ID. Leer lassen, um passende Bestellungen in allen geladenen Amazon-Order-Status-Einträgen zu aktualisieren."
+        }
+      }
     }
   }
 }

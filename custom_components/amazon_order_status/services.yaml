@@ -40,3 +40,114 @@ rescan:
       required: false
       selector:
         text:
+
+set_status:
+  description: Set a manual status for one tracked order or one shipment within an order.
+  fields:
+    order_id:
+      description: The Amazon order number to update (e.g. 123-4567890-1234567).
+      required: true
+      example: "123-4567890-1234567"
+      selector:
+        text:
+    status:
+      description: Manual order or shipment status to apply.
+      required: true
+      example: Delivered
+      selector:
+        select:
+          options:
+            - Ordered
+            - Shipped
+            - Out for delivery
+            - Delivery attempted
+            - Pickup ready
+            - Delayed
+            - Delivery problem
+            - Undeliverable
+            - Partially delivered
+            - Delivered
+            - Canceled
+            - Return started
+            - Refunded
+            - Ignored
+    shipment_id:
+      description: Optional shipment ID to update only one shipment from the order. Leave empty to update the whole order.
+      required: false
+      example: "123-4567890-1234567:default"
+      selector:
+        text:
+    config_entry_id:
+      description: Optional Home Assistant config entry ID. Leave empty to update matching orders across all loaded Amazon Order Status entries.
+      required: false
+      selector:
+        text:
+
+mark_delivered:
+  description: Mark one tracked order or one shipment as delivered manually.
+  fields:
+    order_id:
+      description: The Amazon order number to mark as delivered (e.g. 123-4567890-1234567).
+      required: true
+      example: "123-4567890-1234567"
+      selector:
+        text:
+    shipment_id:
+      description: Optional shipment ID to mark only one shipment as delivered. Leave empty to update the whole order.
+      required: false
+      example: "123-4567890-1234567:default"
+      selector:
+        text:
+    delivered_at:
+      description: Optional delivered-at text to store with the manual delivery update, for example Front door.
+      required: false
+      example: Front door
+      selector:
+        text:
+    config_entry_id:
+      description: Optional Home Assistant config entry ID. Leave empty to update matching orders across all loaded Amazon Order Status entries.
+      required: false
+      selector:
+        text:
+
+ignore_order:
+  description: Ignore one tracked order or one shipment so it no longer counts in active workflow sensors.
+  fields:
+    order_id:
+      description: The Amazon order number to ignore (e.g. 123-4567890-1234567).
+      required: true
+      example: "123-4567890-1234567"
+      selector:
+        text:
+    shipment_id:
+      description: Optional shipment ID to ignore only one shipment. Leave empty to ignore the whole order.
+      required: false
+      example: "123-4567890-1234567:default"
+      selector:
+        text:
+    config_entry_id:
+      description: Optional Home Assistant config entry ID. Leave empty to update matching orders across all loaded Amazon Order Status entries.
+      required: false
+      selector:
+        text:
+
+restore_order:
+  description: Restore one ignored order or shipment so it returns to normal workflow tracking.
+  fields:
+    order_id:
+      description: The Amazon order number to restore (e.g. 123-4567890-1234567).
+      required: true
+      example: "123-4567890-1234567"
+      selector:
+        text:
+    shipment_id:
+      description: Optional shipment ID to restore only one shipment. Leave empty to restore the whole order.
+      required: false
+      example: "123-4567890-1234567:default"
+      selector:
+        text:
+    config_entry_id:
+      description: Optional Home Assistant config entry ID. Leave empty to update matching orders across all loaded Amazon Order Status entries.
+      required: false
+      selector:
+        text:

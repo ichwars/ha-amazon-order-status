@@ -161,6 +161,86 @@
           "description": "Optional Home Assistant config entry ID. Leave empty to rescan all loaded Amazon Order Status entries."
         }
       }
+    },
+    "set_status": {
+      "name": "Set manual status",
+      "description": "Set a manual status for one tracked order or one shipment within an order.",
+      "fields": {
+        "order_id": {
+          "name": "Order ID",
+          "description": "The Amazon order number to update, for example 123-4567890-1234567."
+        },
+        "status": {
+          "name": "Status",
+          "description": "Manual order or shipment status to apply."
+        },
+        "shipment_id": {
+          "name": "Shipment ID",
+          "description": "Optional shipment ID to update only one shipment from the order. Leave empty to update the whole order."
+        },
+        "config_entry_id": {
+          "name": "Config entry ID",
+          "description": "Optional Home Assistant config entry ID. Leave empty to update matching orders across all loaded Amazon Order Status entries."
+        }
+      }
+    },
+    "mark_delivered": {
+      "name": "Mark delivered",
+      "description": "Mark one tracked order or one shipment as delivered manually.",
+      "fields": {
+        "order_id": {
+          "name": "Order ID",
+          "description": "The Amazon order number to mark as delivered, for example 123-4567890-1234567."
+        },
+        "shipment_id": {
+          "name": "Shipment ID",
+          "description": "Optional shipment ID to mark only one shipment as delivered. Leave empty to update the whole order."
+        },
+        "delivered_at": {
+          "name": "Delivered at",
+          "description": "Optional delivered-at text to store with the manual delivery update, for example Front door."
+        },
+        "config_entry_id": {
+          "name": "Config entry ID",
+          "description": "Optional Home Assistant config entry ID. Leave empty to update matching orders across all loaded Amazon Order Status entries."
+        }
+      }
+    },
+    "ignore_order": {
+      "name": "Ignore order",
+      "description": "Ignore one tracked order or one shipment so it no longer counts in active workflow sensors.",
+      "fields": {
+        "order_id": {
+          "name": "Order ID",
+          "description": "The Amazon order number to ignore, for example 123-4567890-1234567."
+        },
+        "shipment_id": {
+          "name": "Shipment ID",
+          "description": "Optional shipment ID to ignore only one shipment. Leave empty to ignore the whole order."
+        },
+        "config_entry_id": {
+          "name": "Config entry ID",
+          "description": "Optional Home Assistant config entry ID. Leave empty to update matching orders across all loaded Amazon Order Status entries."
+        }
+      }
+    },
+    "restore_order": {
+      "name": "Restore order",
+      "description": "Restore one ignored order or shipment so it returns to normal workflow tracking.",
+      "fields": {
+        "order_id": {
+          "name": "Order ID",
+          "description": "The Amazon order number to restore, for example 123-4567890-1234567."
+        },
+        "shipment_id": {
+          "name": "Shipment ID",
+          "description": "Optional shipment ID to restore only one shipment. Leave empty to restore the whole order."
+        },
+        "config_entry_id": {
+          "name": "Config entry ID",
+          "description": "Optional Home Assistant config entry ID. Leave empty to update matching orders across all loaded Amazon Order Status entries."
+        }
+      }
     }
   }
 }
