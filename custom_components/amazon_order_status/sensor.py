@@ -180,13 +180,14 @@ def _filtered_shipments(
     filtered: list[dict[str, Any]] = []
     for shipment in shipments:
         item: dict[str, Any] = {
-            "shipment_id": shipment.get("shipment_id"),
             "status": shipment.get("status"),
             "updated": shipment.get("updated"),
             "history": _filtered_history(coordinator, shipment.get("history", [])),
             "manual": bool(shipment.get("manual")),
             "ignored": bool(shipment.get("ignored")),
         }
+        if coordinator.expose_order_id:
+            item["shipment_id"] = shipment.get("shipment_id")
         if coordinator.expose_item_title:
             item["item_title"] = shipment.get("item_title")
         if coordinator.expose_tracking_url:

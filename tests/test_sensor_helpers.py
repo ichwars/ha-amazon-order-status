@@ -204,7 +204,14 @@ class SensorAttributeFilteringTest(unittest.TestCase):
                     "delivery_window_end": "19:00",
                     "item_image_url": "https://m.media-amazon.com/images/I/example.jpg",
                     "updated": "2026-06-26T12:00:00+00:00",
-                    "history": [],
+                    "history": [
+                        {
+                            "status": "Delivered",
+                            "subject": "Private title shipped",
+                            "updated": "2026-06-26T12:00:00+00:00",
+                            "tracking_url": "https://www.amazon.de/gp/your-account/ship-track/example",
+                        }
+                    ],
                     "manual": False,
                     "ignored": False,
                 }
@@ -229,8 +236,12 @@ class SensorAttributeFilteringTest(unittest.TestCase):
             set(order),
         )
         self.assertEqual(
-            {"shipment_id", "status", "updated", "history", "manual", "ignored"},
+            {"status", "updated", "history", "manual", "ignored"},
             set(order["shipments"][0]),
+        )
+        self.assertEqual(
+            {"status", "updated"},
+            set(order["shipments"][0]["history"][0]),
         )
 
     def test_nested_shipments_expose_opted_in_details(self):
@@ -266,7 +277,14 @@ class SensorAttributeFilteringTest(unittest.TestCase):
                     "item_count": 1,
                     "item_image_url": None,
                     "updated": "2026-06-26T12:00:00+00:00",
-                    "history": [],
+                    "history": [
+                        {
+                            "status": "Delayed",
+                            "subject": "Lieferung ist verspätet: Example",
+                            "updated": "2026-06-26T12:00:00+00:00",
+                            "tracking_url": "https://www.amazon.de/gp/your-account/ship-track/example",
+                        }
+                    ],
                     "manual": False,
                     "ignored": False,
                 }
@@ -279,9 +297,21 @@ class SensorAttributeFilteringTest(unittest.TestCase):
         order = sensor._build_exposed_order(coordinator, data)
 
         self.assertEqual("123-4567890-1234567", order["order_id"])
+        self.assertEqual(
+            "123-4567890-1234567:example",
+            order["shipments"][0]["shipment_id"],
+        )
         self.assertEqual("Example", order["shipments"][0]["item_title"])
         self.assertTrue(order["shipments"][0]["delivery_is_delayed"])
         self.assertIsNone(order["shipments"][0]["delivery_date_start"])
+        self.assertEqual(
+            "Lieferung ist verspätet: Example",
+            order["shipments"][0]["history"][0]["subject"],
+        )
+        self.assertEqual(
+            "https://www.amazon.de/gp/your-account/ship-track/example",
+            order["shipments"][0]["history"][0]["tracking_url"],
+        )
 
     def test_sensitive_body_details_are_visible_with_opt_in(self):
         coordinator = SimpleNamespace(
