@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.0.4
+
+### Fixed
+
+- Restricted IMAP scans to Amazon sender domains at search time, reducing the number of unrelated messages fetched from large folders such as Gmail All Mail.
+
 ## 2.0.3
 
 ### Fixed
